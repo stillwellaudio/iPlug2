@@ -1,0 +1,15 @@
+<map id="IGraphics.h" name="IGraphics.h">
+<area shape="rect" id="node2" href="$_i_plug_constants_8h.html" title="IPlug Constant definitions, Types, magic numbers. " alt="" coords="96,528,219,555"/>
+<area shape="rect" id="node3" href="$_i_plug_logger_8h.html" title="IPlug logging a.k.a tracing functionality. " alt="" coords="465,379,567,405"/>
+<area shape="rect" id="node18" href="$_i_graphics_constants_8h_source.html" title="IGraphicsConstants.h" alt="" coords="2289,453,2437,480"/>
+<area shape="rect" id="node19" href="$_i_graphics_structs_8h_source.html" title="IGraphicsStructs.h" alt="" coords="1807,379,1936,405"/>
+<area shape="rect" id="node25" href="$_i_graphics_utilities_8h_source.html" title="IGraphicsUtilities.h" alt="" coords="1855,304,1988,331"/>
+<area shape="rect" id="node26" href="$_i_graphics_popup_menu_8h.html" title="A class for setting the contents of a pop up menu. " alt="" coords="963,379,1121,405"/>
+<area shape="rect" id="node27" href="$_i_graphics_editor_delegate_8h.html" title="An editor delgate base class for a SOMETHING that uses IGraphics for it&#39;s UI. " alt="" coords="1410,80,1584,107"/>
+<area shape="rect" id="node13" href="$_i_plug_utilities_8h.html" title="Utility functions and macros. " alt="" coords="848,453,955,480"/>
+<area shape="rect" id="node17" href="$_i_plug_platform_8h.html" title="Include to get consistently named preprocessor macros for different platforms and logging functionali..." alt="" coords="1647,528,1757,555"/>
+<area shape="rect" id="node28" href="$_i_plug_editor_delegate_8h.html" title="This pure virtual interface delegates communication in both directions between a UI editor and someth..." alt="" coords="1373,155,1521,181"/>
+<area shape="rect" id="node30" href="$_i_plug_parameter_8h.html" title="IPlug&#39;s parameter class. " alt="" coords="1305,379,1428,405"/>
+<area shape="rect" id="node32" href="$_i_plug_midi_8h.html" title="MIDI and sysex structs/utilites. " alt="" coords="934,304,1020,331"/>
+<area shape="rect" id="node33" href="$_i_plug_structs_8h_source.html" title="IPlugStructs.h" alt="" coords="1298,229,1403,256"/>
+</map>

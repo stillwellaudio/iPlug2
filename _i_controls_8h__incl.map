@@ -1,0 +1,23 @@
+<map id="IControls.h" name="IControls.h">
+<area shape="rect" id="node2" href="$_i_control_8h.html" title="This file contains the base IControl implementation, along with some base classes for specific types ..." alt="" coords="814,155,892,181"/>
+<area shape="rect" id="node39" href="$_i_color_picker_control_8h.html" title="A control for choosing a color. " alt="" coords="891,80,1037,107"/>
+<area shape="rect" id="node40" href="$_i_v_keyboard_control_8h.html" title="Vectorial keyboard control. " alt="" coords="1530,80,1672,107"/>
+<area shape="rect" id="node41" href="$_i_v_meter_control_8h.html" title="Vectorial multichannel capable meter control. " alt="" coords="1385,80,1505,107"/>
+<area shape="rect" id="node44" href="$_i_v_scope_control_8h.html" title="Vectorial multichannel capable oscilloscope control. " alt="" coords="1235,80,1360,107"/>
+<area shape="rect" id="node45" href="$_i_v_multi_slider_control_8h.html" title="A vectorial multi&#45;slider control. " alt="" coords="1061,80,1209,107"/>
+<area shape="rect" id="node5" href="$_i_plug_platform_8h.html" title="Include to get consistently named preprocessor macros for different platforms and logging functionali..." alt="" coords="396,752,507,779"/>
+<area shape="rect" id="node8" href="$_i_graphics_8h.html" title="The lowest level base class of an IGraphics context. " alt="" coords="809,229,897,256"/>
+<area shape="rect" id="node9" href="$_i_plug_constants_8h.html" title="IPlug Constant definitions, Types, magic numbers. " alt="" coords="2340,752,2463,779"/>
+<area shape="rect" id="node10" href="$_i_plug_logger_8h.html" title="IPlug logging a.k.a tracing functionality. " alt="" coords="1874,603,1976,629"/>
+<area shape="rect" id="node21" href="$_i_graphics_constants_8h_source.html" title="IGraphicsConstants.h" alt="" coords="195,677,343,704"/>
+<area shape="rect" id="node22" href="$_i_graphics_structs_8h_source.html" title="IGraphicsStructs.h" alt="" coords="717,603,847,629"/>
+<area shape="rect" id="node27" href="$_i_graphics_utilities_8h_source.html" title="IGraphicsUtilities.h" alt="" coords="357,528,491,555"/>
+<area shape="rect" id="node28" href="$_i_graphics_popup_menu_8h.html" title="A class for setting the contents of a pop up menu. " alt="" coords="1006,603,1164,629"/>
+<area shape="rect" id="node29" href="$_i_graphics_editor_delegate_8h.html" title="An editor delgate base class for a SOMETHING that uses IGraphics for it&#39;s UI. " alt="" coords="1158,304,1332,331"/>
+<area shape="rect" id="node18" href="$_i_plug_utilities_8h.html" title="Utility functions and macros. " alt="" coords="1629,677,1736,704"/>
+<area shape="rect" id="node30" href="$_i_plug_editor_delegate_8h.html" title="This pure virtual interface delegates communication in both directions between a UI editor and someth..." alt="" coords="1269,379,1417,405"/>
+<area shape="rect" id="node32" href="$_i_plug_parameter_8h.html" title="IPlug&#39;s parameter class. " alt="" coords="1341,603,1464,629"/>
+<area shape="rect" id="node34" href="$_i_plug_midi_8h.html" title="MIDI and sysex structs/utilites. " alt="" coords="1874,528,1960,555"/>
+<area shape="rect" id="node35" href="$_i_plug_structs_8h_source.html" title="IPlugStructs.h" alt="" coords="1510,453,1615,480"/>
+<area shape="rect" id="node42" href="$_i_plug_queue_8h.html" title="A lock&#45;free SPSC queue used to transfer data between threads based on MLQueue.h by Randy Jones based ..." alt="" coords="1616,155,1717,181"/>
+</map>
