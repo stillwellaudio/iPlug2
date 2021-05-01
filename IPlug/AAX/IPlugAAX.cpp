@@ -117,6 +117,7 @@ IPlugAAX::IPlugAAX(const InstanceInfo& info, const Config& config)
 
 IPlugAAX::~IPlugAAX()
 {
+  OnActivate(false);
   mParamIDs.Empty(true);
 }
 
@@ -215,6 +216,7 @@ AAX_Result IPlugAAX::EffectInit()
   AAX_CSampleRate sr;
   Controller()->GetSampleRate(&sr);
   SetSampleRate(sr);
+  OnActivate(true);
   OnReset();
   
   return AAX_SUCCESS;
