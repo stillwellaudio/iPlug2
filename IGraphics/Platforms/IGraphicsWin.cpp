@@ -145,7 +145,11 @@ StaticStorage<IGraphicsWin::HFontHolder> IGraphicsWin::sHFontCache;
 
 #pragma mark - Mouse and tablet helpers
 
+#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
+extern int GetScaleForHWND(HWND hWnd);
+#else
 extern float GetScaleForHWND(HWND hWnd);
+#endif
 
 inline IMouseInfo IGraphicsWin::GetMouseInfo(LPARAM lParam, WPARAM wParam)
 {
@@ -244,7 +248,11 @@ void IGraphicsWin::OnDisplayTimer(int vBlankCount)
   // TODO: move this... listen to the right messages in windows for screen resolution changes, etc.
   if (!GetCapture()) // workaround Windows issues with window sizing during mouse move
   {
+#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
+    int scale = GetScaleForHWND(mPlugWnd);
+#else  
     float scale = GetScaleForHWND(mPlugWnd);
+#endif  
     if (scale != GetScreenScale())
       SetScreenScale(scale);
   }
@@ -1468,7 +1476,11 @@ IPopupMenu* IGraphicsWin::CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT&
     }
     DestroyMenu(hMenu);
 
+#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
+    RECT r = { 0, 0, WindowWidth() * GetScreenScale(), WindowHeight() * GetScreenScale() };
+#else
     RECT r = { 0, 0, static_cast<LONG>(WindowWidth() * GetScreenScale()), static_cast<LONG>(WindowHeight() * GetScreenScale()) };
+#endif    
     InvalidateRect(mPlugWnd, &r, FALSE);
 
     return result;
