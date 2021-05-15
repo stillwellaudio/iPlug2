@@ -139,11 +139,7 @@ WDL_DLGRET ReaperExtBase::MainDlgProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
 //    gPrevBounds = r;
 //  };
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-  extern int GetScaleForHWND(HWND hWnd);
-#else
   extern float GetScaleForHWND(HWND hWnd);
-#endif  
 
   switch (uMsg)
   {
