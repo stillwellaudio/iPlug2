@@ -145,11 +145,7 @@ StaticStorage<IGraphicsWin::HFontHolder> IGraphicsWin::sHFontCache;
 
 #pragma mark - Mouse and tablet helpers
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-extern int GetScaleForHWND(HWND hWnd);
-#else
 extern float GetScaleForHWND(HWND hWnd);
-#endif
 
 inline IMouseInfo IGraphicsWin::GetMouseInfo(LPARAM lParam, WPARAM wParam)
 {
