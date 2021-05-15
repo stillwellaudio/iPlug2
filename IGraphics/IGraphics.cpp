@@ -76,11 +76,7 @@ IGraphics::~IGraphics()
   svgStorage.Release();
 }
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-void IGraphics::SetScreenScale(int scale)
-#else
 void IGraphics::SetScreenScale(float scale)
-#endif
 {
   mScreenScale = scale;
   int windowWidth = WindowWidth() * GetPlatformWindowScale();
