@@ -25,11 +25,7 @@ WebViewEditorDelegate::~WebViewEditorDelegate()
   CloseWindow();
 }
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-extern int GetScaleForHWND(HWND hWnd);
-#else
 extern float GetScaleForHWND(HWND hWnd);
-#endif
 
 void* WebViewEditorDelegate::OpenWindow(void* pParent)
 {

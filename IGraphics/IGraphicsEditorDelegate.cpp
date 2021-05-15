@@ -59,19 +59,11 @@ void IGEditorDelegate::CloseWindow()
   }
 }
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-void IGEditorDelegate::SetScreenScale(double scale)
-{
-  if (GetUI())
-    mGraphics->SetScreenScale(static_cast<int>(std::round(scale)));
-}
-#else
 void IGEditorDelegate::SetScreenScale(float scale)
 {
   if (GetUI())
     mGraphics->SetScreenScale(scale);
 }
-#endif
 
 void IGEditorDelegate::SendControlValueFromDelegate(int ctrlTag, double normalizedValue)
 {

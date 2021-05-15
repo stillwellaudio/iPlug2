@@ -35,11 +35,7 @@
 
   UINT(WINAPI *__GetDpiForWindow)(HWND);
 
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-  int GetScaleForHWND(HWND hWnd)
-#else
   float GetScaleForHWND(HWND hWnd)
-#endif  
   {
     if (!__GetDpiForWindow)
     {
@@ -53,11 +49,7 @@
     int dpi = __GetDpiForWindow(hWnd);
 
     if (dpi != USER_DEFAULT_SCREEN_DPI)
-#ifdef IGRAPHICS_QUANTISE_SCREENSCALE
-      return static_cast<int>(std::round(static_cast<double>(dpi) / USER_DEFAULT_SCREEN_DPI));
-#else    
       return static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
-#endif      
 
     return 1;
   }
