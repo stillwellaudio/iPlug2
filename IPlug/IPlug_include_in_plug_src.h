@@ -52,10 +52,11 @@
     {
 #if defined IGRAPHICS_QUANTISE_SCREENSCALE
       return std::round(static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI);
-#else            
+#else
       return static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
-#endif      
+#endif
     }
+
 
     return 1;
   }
