@@ -25,6 +25,7 @@
   //even though this is a .cpp we are in an objc(pp) compilation unit
     #import <Metal/Metal.h>
     #import <QuartzCore/CAMetalLayer.h>
+    #include "include/gpu/mtl/GrMtlBackendContext.h"
   #elif !defined IGRAPHICS_CPU
     #error Define either IGRAPHICS_GL2, IGRAPHICS_GL3, IGRAPHICS_METAL, or IGRAPHICS_CPU for IGRAPHICS_SKIA with OS_MAC
   #endif
@@ -33,6 +34,8 @@
   #pragma comment(lib, "zlib.lib")
   #pragma comment(lib, "skia.lib")
   #pragma comment(lib, "svg.lib")
+  #pragma comment(lib, "skshaper.lib")
+  #pragma comment(lib, "skunicode.lib")
   #pragma comment(lib, "opengl32.lib")
 #endif
 
@@ -50,7 +53,7 @@ extern std::map<std::string, MTLTexturePtr> gTextureMap;
 class IGraphicsSkia::Bitmap : public APIBitmap
 {
 public:
-  Bitmap(sk_sp<SkSurface> surface, int width, int height, int scale, float drawScale);
+  Bitmap(sk_sp<SkSurface> surface, int width, int height, float scale, float drawScale);
   Bitmap(const char* path, double sourceScale);
   Bitmap(const void* pData, int size, double sourceScale);
   Bitmap(sk_sp<SkImage>, double sourceScale);
@@ -59,7 +62,7 @@ private:
   SkiaDrawable mDrawable;
 };
   
-IGraphicsSkia::Bitmap::Bitmap(sk_sp<SkSurface> surface, int width, int height, int scale, float drawScale)
+IGraphicsSkia::Bitmap::Bitmap(sk_sp<SkSurface> surface, int width, int height, float scale, float drawScale)
 {
   mDrawable.mSurface = surface;
   mDrawable.mIsSurface = true;
@@ -312,7 +315,10 @@ void IGraphicsSkia::OnViewInitialized(void* pContext)
   CAMetalLayer* pMTLLayer = (CAMetalLayer*) pContext;
   id<MTLDevice> device = pMTLLayer.device;
   id<MTLCommandQueue> commandQueue = [device newCommandQueue];
-  mGrContext = GrDirectContext::MakeMetal((void*) device, (void*) commandQueue);
+  GrMtlBackendContext backendContext = {};
+  backendContext.fDevice.retain((__bridge GrMTLHandle) device);
+  backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
+  mGrContext = GrDirectContext::MakeMetal(backendContext);
   mMTLDevice = (void*) device;
   mMTLCommandQueue = (void*) commandQueue;
   mMTLLayer = pContext;
@@ -547,7 +553,6 @@ void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int src
 {
   SkPaint p;
   
-  p.setFilterQuality(kHigh_SkFilterQuality);
   p.setAntiAlias(true);
   p.setBlendMode(SkiaBlendMode(pBlend));
   if (pBlend)
@@ -564,10 +569,12 @@ void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int src
   mCanvas->scale(scale1, scale1);
   mCanvas->translate(-srcX * scale2, -srcY * scale2);
   
+  auto samplingOptions = SkSamplingOptions(SkCubicResampler::Mitchell());
+  
   if (image->mIsSurface)
-    image->mSurface->draw(mCanvas, 0.0, 0.0, &p);
+    image->mSurface->draw(mCanvas, 0.0, 0.0, samplingOptions, &p);
   else
-    mCanvas->drawImage(image->mImage, 0.0, 0.0, &p);
+    mCanvas->drawImage(image->mImage, 0.0, 0.0, samplingOptions, &p);
     
   mCanvas->restore();
 }
@@ -899,7 +906,7 @@ void IGraphicsSkia::SetClipRegion(const IRECT& r)
   mCanvas->setMatrix(mFinalMatrix);
 }
 
-APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, int scale, double drawScale, bool cacheable)
+APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, float scale, double drawScale, bool cacheable)
 {
   sk_sp<SkSurface> surface;
   

@@ -176,7 +176,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   }
 }
 
-- (void)setPreferredContentSize:(CGSize)preferredContentSize
+- (void) setPreferredContentSize:(CGSize)preferredContentSize
 {
   super.preferredContentSize = preferredContentSize;
 }
@@ -879,6 +879,17 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   mColorPickerHandlerFunc = nullptr;
 }
 #endif
+
+- (void) traitCollectionDidChange: (UITraitCollection*) previousTraitCollection
+{
+  [super traitCollectionDidChange: previousTraitCollection];
+
+  if(mGraphics)
+  {
+    mGraphics->OnAppearanceChanged([self.traitCollection userInterfaceStyle] == UIUserInterfaceStyleDark ? EUIAppearance::Dark
+                                                                                                         : EUIAppearance::Light);
+  }
+}
 
 - (void) getLastTouchLocation: (float&) x : (float&) y
 {

@@ -60,7 +60,7 @@ IGraphicsIOS::IGraphicsIOS(IGEditorDelegate& dlg, int w, int h, int fps, float s
   {
     NSBundle* pBundle = [NSBundle mainBundle];
 
-    if(IsAuv3AppExtension())
+    if(IsOOPAuv3AppExtension())
       pBundle = [NSBundle bundleWithPath: [[[pBundle bundlePath] stringByDeletingLastPathComponent] stringByDeletingLastPathComponent]];
     
     NSArray<NSURL*>* pTextureFiles = [pBundle URLsForResourcesWithExtension:@"ktx" subdirectory:@""];
@@ -323,6 +323,21 @@ void IGraphicsIOS::LaunchBluetoothMidiDialog(float x, float y)
   ReleaseMouseCapture();
   NSDictionary* dic = @{@"x": @(x), @"y": @(y)};
   [[NSNotificationCenter defaultCenter] postNotificationName:@"LaunchBTMidiDialog" object:nil userInfo:dic];
+}
+
+EUIAppearance IGraphicsIOS::GetUIAppearance() const
+{
+  IGRAPHICS_VIEW* pView = (IGRAPHICS_VIEW*) mView;
+  
+  if (pView)
+  {
+    return [[pView traitCollection] userInterfaceStyle] == UIUserInterfaceStyleDark ? EUIAppearance::Dark
+                                                                                    : EUIAppearance::Light;
+  }
+  else
+  {
+    return EUIAppearance::Light;
+  }
 }
 
 #if defined IGRAPHICS_NANOVG

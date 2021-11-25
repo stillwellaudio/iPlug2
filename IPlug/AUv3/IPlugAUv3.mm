@@ -150,13 +150,19 @@ void IPlugAUv3::ProcessWithEvents(AudioTimeStamp const* pTimestamp, uint32_t fra
       case AURenderEventParameterRamp:
       {
         const AUParameterEvent& paramEvent = pEvent->parameter;
-        const int paramIdx = GetParamIdx(paramEvent.parameterAddress);
-        const double value = (double) paramEvent.value;
-        const int sampleOffset = (int) (paramEvent.eventSampleTime - now);
-        ENTER_PARAMS_MUTEX
-        GetParam(paramIdx)->Set(value);
-        LEAVE_PARAMS_MUTEX
-        OnParamChange(paramIdx, EParamSource::kHost, sampleOffset);
+        
+        if (paramEvent.parameterAddress < NParams())
+        {
+          const int paramIdx = GetParamIdx(paramEvent.parameterAddress);
+          
+          const double value = (double) paramEvent.value;
+          const int sampleOffset = (int) (paramEvent.eventSampleTime - now);
+          ENTER_PARAMS_MUTEX
+          GetParam(paramIdx)->Set(value);
+          LEAVE_PARAMS_MUTEX
+          OnParamChange(paramIdx, EParamSource::kHost, sampleOffset);
+        }
+
         break;
       }
       break;
@@ -213,21 +219,27 @@ void IPlugAUv3::ProcessWithEvents(AudioTimeStamp const* pTimestamp, uint32_t fra
 // this is called on a secondary thread (not main thread, not audio thread)
 void IPlugAUv3::SetParameterFromValueObserver(uint64_t address, float value)
 {
-  const int paramIdx = GetParamIdx(address);
+  if (address < NParams())
+  {
+    const int paramIdx = GetParamIdx(address);
 
-  ENTER_PARAMS_MUTEX
-  IParam* pParam = GetParam(paramIdx);
-  assert(pParam);
-  pParam->Set((double) value);
-  LEAVE_PARAMS_MUTEX  
-  OnParamChange(paramIdx, kHost, -1);
+    ENTER_PARAMS_MUTEX
+    IParam* pParam = GetParam(paramIdx);
+    assert(pParam);
+    pParam->Set((double) value);
+    LEAVE_PARAMS_MUTEX
+    OnParamChange(paramIdx, kHost, -1);
+  }
 }
 
 void IPlugAUv3::SendParameterValueFromObserver(uint64_t address, float value)
 {
-  const int paramIdx = GetParamIdx(address);
-  
-  SendParameterValueFromAPI(paramIdx, value, false); // will trigger OnParamChangeUI()
+  if (address < NParams())
+  {
+    const int paramIdx = GetParamIdx(address);
+    
+    SendParameterValueFromAPI(paramIdx, value, false); // will trigger OnParamChangeUI()
+  }
 }
 
 float IPlugAUv3::GetParameter(uint64_t address)
@@ -260,38 +272,47 @@ float IPlugAUv3::GetParamStringToValue(uint64_t address, const char* str)
   return val;
 }
 
-void IPlugAUv3::SetBuffers(AudioBufferList* pInBufList, AudioBufferList* pOutBufList, uint32_t outBusNumber)
+void IPlugAUv3::AttachInputBuffers(AudioBufferList* pInBufList)
 {
   int chanIdx = 0;
-  if(pInBufList)
+  
+  if (pInBufList)
   {
-    for(int i = 0; i < pInBufList->mNumberBuffers; i++)
+    for (int i = 0; i < pInBufList->mNumberBuffers; i++)
     {
       int nConnected = pInBufList->mBuffers[i].mNumberChannels;
       SetChannelConnections(ERoute::kInput, chanIdx, nConnected, true);
       AttachBuffers(ERoute::kInput, chanIdx, nConnected, (float**) &(pInBufList->mBuffers[i].mData), GetBlockSize());
       chanIdx += nConnected;
     }
+    
+    SetChannelConnections(ERoute::kInput, chanIdx, MaxNChannels(kInput) - chanIdx, false);
   }
-  
-  chanIdx = 0;
-  
-  if(pOutBufList)
+}
+
+void IPlugAUv3::AttachOutputBuffers(AudioBufferList* pOutBufList, uint32_t busNumber)
+{
+  int chanIdx = 0;
+
+  if (pOutBufList)
   {
     int numChannelsInBus = pOutBufList->mNumberBuffers; // TODO: this assumes all busses have the same channel count
     
-    for(int i = 0; i < pOutBufList->mNumberBuffers; i++)
+    for (int i = 0; i < pOutBufList->mNumberBuffers; i++)
     {
       int nConnected = pOutBufList->mBuffers[i].mNumberChannels;
-      SetChannelConnections(ERoute::kOutput, (outBusNumber * numChannelsInBus) + chanIdx, nConnected, true);
-      AttachBuffers(ERoute::kOutput, (outBusNumber * numChannelsInBus) + chanIdx, nConnected, (float**) &(pOutBufList->mBuffers[i].mData), GetBlockSize());
+      SetChannelConnections(ERoute::kOutput, (busNumber * numChannelsInBus) + chanIdx, nConnected, true);
+      AttachBuffers(ERoute::kOutput, (busNumber * numChannelsInBus) + chanIdx, nConnected, (float**) &(pOutBufList->mBuffers[i].mData), GetBlockSize());
       chanIdx += nConnected;
     }
+    SetChannelConnections(ERoute::kInput, chanIdx, MaxNChannels(kOutput) - chanIdx, false);
   }
 }
 
 void IPlugAUv3::Prepare(double sampleRate, uint32_t blockSize)
 {
+  SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), false);
+  SetChannelConnections(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), false);
   SetBlockSize(blockSize);
   SetSampleRate(sampleRate);
 }

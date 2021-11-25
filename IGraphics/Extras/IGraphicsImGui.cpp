@@ -212,10 +212,9 @@ void ImGuiRenderer::Init()
     SkPixmap pmap(info, pixels, info.minRowBytes());
     SkMatrix localMatrix = SkMatrix::Scale(1.0f / w, 1.0f / h);
     auto fontImage = SkImage::MakeFromRaster(pmap, nullptr, nullptr);
-    auto fontShader = fontImage->makeShader(&localMatrix);
+    auto fontShader = fontImage->makeShader(SkSamplingOptions(), &localMatrix);
     fFontPaint.setShader(fontShader);
     fFontPaint.setColor(SK_ColorWHITE);
-    fFontPaint.setFilterQuality(kLow_SkFilterQuality);
     io.Fonts->TexID = &fFontPaint;
   #endif
 #else
@@ -259,10 +258,9 @@ void ImGuiRenderer::NewFrame()
   SkPixmap pmap(info, pixels, info.minRowBytes());
   SkMatrix localMatrix = SkMatrix::Scale(1.0f / w, 1.0f / h);
   auto fontImage = SkImage::MakeFromRaster(pmap, nullptr, nullptr);
-  auto fontShader = fontImage->makeShader(&localMatrix);
+  auto fontShader = fontImage->makeShader(SkSamplingOptions(), &localMatrix);
   fFontPaint.setShader(fontShader);
   fFontPaint.setColor(SK_ColorWHITE);
-  fFontPaint.setFilterQuality(kLow_SkFilterQuality);
   io.Fonts->TexID = &fFontPaint;
   this->DoFrame();
 #elif defined IGRAPHICS_GL2
