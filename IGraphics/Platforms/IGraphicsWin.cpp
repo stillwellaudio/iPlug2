@@ -175,7 +175,8 @@ void IGraphicsWin::CheckTabletInput(UINT msg)
     const LONG_PTR c_MOUSEEVENTF_FROMTOUCH = 0xFF515700;
     
     LONG_PTR extraInfo = GetMessageExtraInfo();
-    SetTabletInput(((extraInfo & c_SIGNATURE_MASK) == c_MOUSEEVENTF_FROMTOUCH));
+    bool touchOrPen = !(((extraInfo & 0x7F) && (IsWindowsVistaOrGreater()? (extraInfo & 0x80) : 1)) || ((extraInfo & c_SIGNATURE_MASK) == c_MOUSEEVENTF_FROMTOUCH));
+    SetTabletInput(touchOrPen);
     mCursorLock &= !mTabletInput;
   }
 }
@@ -233,6 +234,7 @@ void IGraphicsWin::OnDisplayTimer(int vBlankCount)
       }
       case kCancel:
         DestroyEditWindow();
+        ClearInTextEntryControl();
         break;
     }
 
@@ -464,6 +466,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       return 0;
     }
     case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDBLCLK:
     {
       if (IsTouchEvent())
         return 0;

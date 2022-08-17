@@ -54,9 +54,9 @@ using namespace igraphics;
 
 @end
 
-@interface IGRAPHICS_VIEW : UIScrollView <UITextFieldDelegate, UIScrollViewDelegate,
-                                          UIPopoverPresentationControllerDelegate, UIGestureRecognizerDelegate,
-                                          UITraitEnvironment
+@interface IGRAPHICS_VIEW : UIView <UITextFieldDelegate,
+                                    UIPopoverPresentationControllerDelegate, UIGestureRecognizerDelegate,
+                                    UITraitEnvironment
 #ifdef __IPHONE_14_0
 , UIColorPickerViewControllerDelegate
 #endif
@@ -67,6 +67,7 @@ using namespace igraphics;
   IGRAPHICS_UITABLEVC* mMenuTableController;
   UINavigationController* mMenuNavigationController;
   UITextField* mTextField;
+  UIAlertController* mAlertController;
   CAMetalLayer* mMTLLayer;
   int mTextFieldLength;
   IColorPickerHandlerFunc mColorPickerHandlerFunc;
@@ -106,15 +107,3 @@ using namespace igraphics;
 @property (nonatomic, strong) CADisplayLink *displayLink;
 
 @end
-
-#ifdef IGRAPHICS_IMGUI
-#import <MetalKit/MetalKit.h>
-
-@interface IGRAPHICS_IMGUIVIEW : MTKView
-{
-  IGraphicsIOS_View* mView;
-}
-@property (nonatomic, strong) id <MTLCommandQueue> commandQueue;
-- (id) initWithIGraphicsView: (IGraphicsIOS_View*) pView;
-@end
-#endif

@@ -49,10 +49,6 @@
 #include "IGraphicsPopupMenu.h"
 #include "IGraphicsEditorDelegate.h"
 
-#ifdef IGRAPHICS_IMGUI
-#include "IGraphicsImGui.h"
-#endif
-
 #include "nanosvg.h"
 
 #include <stack>
@@ -1093,6 +1089,9 @@ public:
   /** @return Ptr to the control that launched the text entry */
   IControl* GetControlInTextEntry() { return mInTextEntry; }
   
+  /** Called when the text entry is dismissed, to reset mInTextEntry */
+  void ClearInTextEntryControl() { mInTextEntry = nullptr; }
+  
   /** @return \c true if tool tips are enabled */
   inline bool TooltipsEnabled() const { return mEnableTooltips; }
   
@@ -1169,11 +1168,6 @@ public:
    * @param func A function to do something when a MIDI message is triggered */
   void SetQwertyMidiKeyHandlerFunc(std::function<void(const IMidiMsg& msg)> func = nullptr);
   
-  /** Set functions to draw DearImGui widgets on top of the IGraphics context (only relevant when IGRAPHICS_IMGUI is defined) 
-   * @param drawFunc Called at the framerate, where you do the main ImGui
-   * @param setupFunc Called once after ImGui context is created */
-  void AttachImGui(std::function<void(IGraphics*)> drawFunc, std::function<void()> setupFunc = nullptr);
-  
   /** Called by platform class to see if the point at x, y is linked to a gesture recognizer */
   bool RespondsToGesture(float x, float y);
   
@@ -1185,8 +1179,6 @@ public:
   virtual float GetPlatformWindowScale() const { return 1.f; }
 
 private:
-  /* NO-OP to create ImGui when IGRAPHICS_IMGUI is defined */
-  virtual void CreatePlatformImGui() {}
   
   /** \todo */
   virtual void PlatformResize(bool parentHasResized) {}
@@ -1815,11 +1807,6 @@ protected:
   IRECT mClipRECT;
   IMatrix mTransform;
   std::stack<IMatrix> mTransformStates;
-  
-#ifdef IGRAPHICS_IMGUI
-public:
-  std::unique_ptr<ImGuiRenderer> mImGuiRenderer;
-#endif
 };
 
 END_IGRAPHICS_NAMESPACE

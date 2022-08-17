@@ -7,6 +7,7 @@
  
  ==============================================================================
 */
+#pragma once
 
 #include "denormal.h"
 #include "IPlugConstants.h"
@@ -85,5 +86,26 @@ public:
   }
 
 } WDL_FIXALIGN;
+
+template<typename T>
+class SmoothedGain
+{
+public:
+  void ProcessBlock(T** inputs, T** outputs, int nChans, int nFrames, double gainValue)
+  {
+    for (auto s = 0; s < nFrames; ++s)
+    {
+      const double smoothedGain = mSmoother.Process(gainValue);
+      
+      for (auto c = 0; c < nChans; c++)
+      {
+        outputs[c][s] = inputs[c][s] * smoothedGain;
+      }
+    }
+  }
+  
+private:
+  LogParamSmooth<double, 1> mSmoother;
+};
 
 END_IPLUG_NAMESPACE
