@@ -13,6 +13,7 @@ See LICENSE.txt for  more info.
 #include <string>
 #include <windows.h>
 #include <shlobj.h>
+//#include <shlwapi.h>
 #include <cassert>
 
 using namespace iplug;
@@ -30,10 +31,8 @@ IWebView::~IWebView()
   CloseWebView();
 }
 
-typedef HRESULT(*TCCWebView2EnvWithOptions)(
-  PCWSTR browserExecutableFolder,
-  PCWSTR userDataFolder,
-  PCWSTR additionalBrowserArguments,
+typedef HRESULT (*TCCWebView2EnvWithOptions)(
+  PCWSTR browserExecutableFolder, PCWSTR userDataFolder, PCWSTR additionalBrowserArguments,
   ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler* environment_created_handler);
 
 void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, float scale, bool enableDevTools)
@@ -53,19 +52,38 @@ void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, f
   std::vector<WCHAR> cachePathWide(bufSize);
   UTF8ToUTF16(cachePathWide.data(), cachePath.Get(), IPLUG_WIN_MAX_WIDE_PATH);
 
+  auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+  options->put_AllowSingleSignOnUsingOSPrimaryAccount(FALSE);
+  options->put_ExclusiveUserDataFolderAccess(FALSE);
+  // options->put_Language(m_language.c_str());
+  options->put_IsCustomCrashReportingEnabled(FALSE);
+
+  // Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions4> options4;
+  // if (options.As(&options4) == S_OK)
+  //{
+  //   // const WCHAR* allowedOrigins[1] = {L"https://*.example.com"};
+  //   auto customSchemeRegistration = Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(L"iplug");
+  //   customSchemeRegistration->put_TreatAsSecure(TRUE);
+  //   // customSchemeRegistration->SetAllowedOrigins(1, allowedOrigins);
+  //   customSchemeRegistration->put_HasAuthorityComponent(TRUE);
+  //   ICoreWebView2CustomSchemeRegistration *registrations[1] = {customSchemeRegistration.Get()};
+  //   options4->SetCustomSchemeRegistrations(1, static_cast<ICoreWebView2CustomSchemeRegistration **>(registrations));
+  // }
+
   CreateCoreWebView2EnvironmentWithOptions(
-    nullptr, cachePathWide.data(), nullptr,
-  Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-    [&, x, y, w, h](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-      env
-        ->CreateCoreWebView2Controller(
-          mParentWnd,
+    nullptr, cachePathWide.data(), options.Get(),
+    Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([&, x, y, w, h](
+                                                                           HRESULT result,
+                                                                           ICoreWebView2Environment* env) -> HRESULT {
+      mWebViewEnvironment = env;
+      mWebViewEnvironment->CreateCoreWebView2Controller(
+        mParentWnd,
         Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
           [&, x, y, w, h, enableDevTools](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
             if (controller != nullptr)
             {
               mWebViewCtrlr = controller;
-              mWebViewCtrlr->get_CoreWebView2(&mWebViewWnd);
+              mWebViewCtrlr->get_CoreWebView2(&mCoreWebView);
             }
             
             if (mWebViewWnd == nullptr) {
@@ -75,7 +93,7 @@ void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, f
             mWebViewCtrlr->put_IsVisible(mShowOnLoad);
 
             ICoreWebView2Settings* Settings;
-            mWebViewWnd->get_Settings(&Settings);
+            mCoreWebView->get_Settings(&Settings);
             Settings->put_IsScriptEnabled(TRUE);
             Settings->put_AreDefaultScriptDialogsEnabled(TRUE);
             Settings->put_IsWebMessageEnabled(TRUE);
@@ -83,26 +101,28 @@ void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, f
             Settings->put_AreDevToolsEnabled(enableDevTools);
 
             // this script adds a function IPlugSendMsg that is used to call the platform webview messaging function in JS
-            mWebViewWnd->AddScriptToExecuteOnDocumentCreated(
+            mCoreWebView->AddScriptToExecuteOnDocumentCreated(
               L"function IPlugSendMsg(m) {window.chrome.webview.postMessage(m)};",
               Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>([this](HRESULT error,
                                                                                                 PCWSTR id) -> HRESULT {
                 return S_OK;
               }).Get());
 
-            mWebViewWnd->add_WebMessageReceived(
-              Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                [this](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* args) {
-                  wil::unique_cotaskmem_string jsonString;
-                  args->get_WebMessageAsJson(&jsonString);
-                  std::wstring jsonWString = jsonString.get();
-                  WDL_String cStr;
-                  UTF16ToUTF8(cStr, jsonWString.c_str());
-                  OnMessageFromWebView(cStr.Get());
-                  return S_OK;
-                }).Get(), &mWebMessageReceivedToken);
+            mCoreWebView->add_WebMessageReceived(
+              Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](
+                                                                      ICoreWebView2* sender,
+                                                                      ICoreWebView2WebMessageReceivedEventArgs* args) {
+                wil::unique_cotaskmem_string jsonString;
+                args->get_WebMessageAsJson(&jsonString);
+                std::wstring jsonWString = jsonString.get();
+                WDL_String cStr;
+                UTF16ToUTF8(cStr, jsonWString.c_str());
+                OnMessageFromWebView(cStr.Get());
+                return S_OK;
+              }).Get(),
+              &mWebMessageReceivedToken);
 
-            mWebViewWnd->add_NavigationCompleted(
+            mCoreWebView->add_NavigationCompleted(
               Callback<ICoreWebView2NavigationCompletedEventHandler>(
                 [this](ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
                   BOOL success;
@@ -113,7 +133,8 @@ void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, f
                   }
                   return S_OK;
                 })
-              .Get(), &mNavigationCompletedToken);
+                .Get(),
+              &mNavigationCompletedToken);
 
             if (!mOpaque)
             {
@@ -123,10 +144,12 @@ void* IWebView::OpenWebView(void* pParent, float x, float y, float w, float h, f
               controller2->put_DefaultBackgroundColor(color);
             }
 
-            mWebViewCtrlr->put_Bounds({ (LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h) });
+            mWebViewCtrlr->put_Bounds({(LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h)});
             OnWebViewReady();
             return S_OK;
-          }).Get());
+          })
+          .Get());
+
       return S_OK;
     }).Get());
 
@@ -139,7 +162,8 @@ void IWebView::CloseWebView()
   {
     mWebViewCtrlr->Close();
     mWebViewCtrlr = nullptr;
-    mWebViewWnd = nullptr;
+    mCoreWebView = nullptr;
+    mWebViewEnvironment = nullptr;
   }
 }
 
@@ -179,16 +203,27 @@ void IWebView::LoadURL(const char* url)
   }
 }
 
-void IWebView::LoadFile(const char* fileName, const char* bundleID)
+void IWebView::LoadFile(const char* fileName, const char* bundleID, bool /*useCustomScheme*/)
 {
-  if (mWebViewWnd)
+  if (mCoreWebView)
   {
+    wil::com_ptr<ICoreWebView2_3> webView3 = mCoreWebView.try_query<ICoreWebView2_3>();
+    if (webView3)
+    {
+      WDL_String webFolder{fileName};
+      webFolder.remove_filepart();
+      int bufSize = UTF8ToUTF16Len(fullStr.Get());
+      std::vector<WCHAR> webFolderWide(bufSize);
+      UTF8ToUTF16(webFolderWide(), fullStr.Get(), IPLUG_WIN_MAX_WIDE_PATH);
+
+      webView3->SetVirtualHostNameToFolderMapping(
+        L"iplug.example", webFolderWide, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
+    }
+
+    WDL_String baseName{fileName};
     WDL_String fullStr;
-#ifdef OS_WIN
-    fullStr.SetFormatted(MAX_WIN32_PATH_LEN, "file://%s", fileName);
-#else
-    fullStr.SetFormatted(MAX_MACOS_PATH_LEN, "file://%s", fileName);
-#endif
+    fullStr.SetFormatted(MAX_WIN32_PATH_LEN, "https://iplug.example/%s", baseName.get_filepart());
+    // fullStr.SetFormatted(MAX_WIN32_PATH_LEN, useCustomScheme ? "iplug://%s" : "file://%s", fileName);
     int bufSize = UTF8ToUTF16Len(fullStr.Get());
     std::vector<WCHAR> fileUrlWide(bufSize);
     UTF8ToUTF16(fileUrlWide.data(), fullStr.Get(), bufSize);
@@ -198,21 +233,23 @@ void IWebView::LoadFile(const char* fileName, const char* bundleID)
 
 void IWebView::EvaluateJavaScript(const char* scriptStr, completionHandlerFunc func)
 {
-  if (mWebViewWnd)
+  if (mCoreWebView)
   {
     int bufSize = UTF8ToUTF16Len(scriptStr);
     std::vector<WCHAR> scriptWide(bufSize);
     UTF8ToUTF16(scriptWide.data(), scriptStr, bufSize);
 
-    mWebViewWnd->ExecuteScript(scriptWide.data(), Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-      [func](HRESULT errorCode, LPCWSTR resultObjectAsJson) -> HRESULT {
-        if (func && resultObjectAsJson) {
-          WDL_String str;
-          UTF16ToUTF8(str, resultObjectAsJson);
-          func(str.Get());
-        }
-        return S_OK;
-      }).Get());
+    mCoreWebView->ExecuteScript(
+      scriptWide.data(), Callback<ICoreWebView2ExecuteScriptCompletedHandler>([func](HRESULT errorCode,
+                                                                              LPCWSTR resultObjectAsJson) -> HRESULT {
+                    if (func && resultObjectAsJson)
+                    {
+                      WDL_String str;
+                      UTF16ToUTF8(str, resultObjectAsJson);
+                      func(str.Get());
+                    }
+                    return S_OK;
+                  }).Get());
   }
 }
 
@@ -237,6 +274,6 @@ void IWebView::SetWebViewBounds(float x, float y, float w, float h, float scale)
     w *= ss;
     h *= ss;
 
-    mWebViewCtrlr->SetBoundsAndZoomFactor({ (LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h) }, scale);
+    mWebViewCtrlr->SetBoundsAndZoomFactor({(LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h)}, scale);
   }
 }
