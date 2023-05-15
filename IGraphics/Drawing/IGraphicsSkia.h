@@ -157,10 +157,10 @@ private:
 #endif
   
 #ifdef IGRAPHICS_METAL
-  void* mMTLDevice;
-  void* mMTLCommandQueue;
-  void* mMTLDrawable;
-  void* mMTLLayer;
+  void* mMTLDevice = nullptr;
+  void* mMTLCommandQueue = nullptr;
+  void* mMTLDrawable = nullptr;
+  void* mMTLLayer = nullptr;
 #endif
 
   static StaticStorage<Font> sFontCache;

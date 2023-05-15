@@ -321,16 +321,18 @@ void IGraphicsSkia::OnViewInitialized(void* pContext)
   auto glInterface = GrGLMakeNativeInterface();
   mGrContext = GrDirectContext::MakeGL(glInterface);
 #elif defined IGRAPHICS_METAL
-  CAMetalLayer* pMTLLayer = (CAMetalLayer*) pContext;
-  id<MTLDevice> device = pMTLLayer.device;
-  id<MTLCommandQueue> commandQueue = [device newCommandQueue];
-  GrMtlBackendContext backendContext = {};
-  backendContext.fDevice.retain((__bridge GrMTLHandle) device);
-  backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
-  mGrContext = GrDirectContext::MakeMetal(backendContext);
-  mMTLDevice = (void*) device;
-  mMTLCommandQueue = (void*) commandQueue;
-  mMTLLayer = pContext;
+  if (mMTLDevice == nullptr){
+    CAMetalLayer* pMTLLayer = (CAMetalLayer*) pContext;
+    id<MTLDevice> device = pMTLLayer.device;
+    id<MTLCommandQueue> commandQueue = [device newCommandQueue];
+    GrMtlBackendContext backendContext = {};
+    backendContext.fDevice.retain((__bridge GrMTLHandle) device);
+    backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
+    mGrContext = GrDirectContext::MakeMetal(backendContext);
+    mMTLDevice = (void*) device;
+    mMTLCommandQueue = (void*) commandQueue;
+    mMTLLayer = pContext;
+  }
 #endif
 
   DrawResize();
