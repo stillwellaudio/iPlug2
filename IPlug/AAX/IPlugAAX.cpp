@@ -86,7 +86,7 @@ AAX_Result AAX_CEffectGUI_IPLUG::SetControlHighlightInfo(AAX_CParamID paramID, A
   {
     int paramIdx = atoi(paramID) - kAAXParamIdxOffset;
 
-    pViewInterface->SetPTParameterHighlight(paramIdx, (bool) iIsHighlighted, (int) iColor);
+    if (paramIdx != -1) pViewInterface->SetPTParameterHighlight(paramIdx, (bool) iIsHighlighted, (int) iColor);
     return AAX_SUCCESS;
   }
   
