@@ -57,7 +57,7 @@ static LRESULT sendSwellMessage(id obj, UINT uMsg, WPARAM wParam, LPARAM lParam)
 }
 static void InvalidateSuperViews(NSView *view);
 #define STANDARD_CONTROL_NEEDSDISPLAY_IMPL(classname) \
-  - (const char *)swellGetClass { return ( classname ); } \
+  - (const char *)getSwellClass { return ( classname ); } \
   - (void)setNeedsDisplay:(BOOL)flag \
   { \
   [super setNeedsDisplay:flag]; \
@@ -70,6 +70,8 @@ static void InvalidateSuperViews(NSView *view);
   }
 
 
+static WDL_PtrList<char> s_prefix_removals;
+
 int g_swell_osx_readonlytext_wndbg = 0;
 int g_swell_osx_style = 0; // &1 = rounded buttons, &2=big sur styled lists
 static void *SWELL_CStringToCFString_FilterPrefix(const char *str)
@@ -78,15 +80,33 @@ static void *SWELL_CStringToCFString_FilterPrefix(const char *str)
   while (str[c] && str[c] != '&' && c++<1024);
   if (!str[c] || c>=1024 || strlen(str)>=1024) return SWELL_CStringToCFString(str);
   char buf[1500];
-  const char *p=str;
-  char *op=buf;
-  while (*p)
   {
-    if (*p == '&')  p++;
-    if (!*p) break;
-    *op++=*p++;
+    const char *p=str;
+    char *op=buf;
+    while (*p)
+    {
+      if (*p == '&')  p++;
+      if (!*p) break;
+      *op++=*p++;
+    }
+    *op=0;
   }
-  *op=0;
+
+  // add to recent prefix removal cache for localization
+  if (WDL_NOT_NORMALLY(s_prefix_removals.GetSize() > 256))
+    s_prefix_removals.Delete(0,true,free);
+
+  {
+    const size_t sz1 = strlen(buf), sz2 = strlen(str);
+    char *p = (char *)malloc(sz1+sz2+2);
+    if (WDL_NORMALLY(p!=NULL))
+    {
+      memcpy(p,buf,sz1+1);
+      memcpy(p+sz1+1,str,sz2+1);
+      s_prefix_removals.Add(p);
+    }
+  }
+
   return SWELL_CStringToCFString(buf);
 
 }
@@ -108,7 +128,7 @@ static int _listviewrowSearchFunc(const void *_a, const void *_b, const void *ct
   const char *a = (const char *)_a;
   SWELL_ListView_Row *row = (SWELL_ListView_Row *)_b;
   const char *b="";
-  if (!row || !(b=row->m_vals.Get(0))) b="";
+  if (!row || !(b=row->get_col_txt(0))) b="";
   return strcmp(a,b);
 }
 static int _listviewrowSearchFunc2(const void *_a, const void *_b, const void *ctx)
@@ -116,7 +136,7 @@ static int _listviewrowSearchFunc2(const void *_a, const void *_b, const void *c
   const char *a = (const char *)_a;
   SWELL_ListView_Row *row = (SWELL_ListView_Row *)_b;
   const char *b="";
-  if (!row || !(b=row->m_vals.Get(0))) b="";
+  if (!row || !(b=row->get_col_txt(0))) b="";
   return strcmp(b,a);
 }
 
@@ -252,10 +272,11 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL("msctls_progress32")
 @end
 
 @implementation SWELL_StatusCell
--(id)initNewCell
+-(id)initNewCell:(bool)always_indent
 {
   if ((self=[super initTextCell:@""]))
   {
+    m_always_indent=always_indent;
     status=0;
   }
   return self;
@@ -287,12 +308,34 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL("msctls_progress32")
     [status drawInRect:NSMakeRect(cellFrame.origin.x + xo,cellFrame.origin.y + yo,use_w,use_h)
       fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
   }
-  cellFrame.origin.x += cellFrame.size.height + 2.0;
-  cellFrame.size.width -= cellFrame.size.height + 2.0;
+  if (m_always_indent || status)
+  {
+    cellFrame.origin.x += cellFrame.size.height + 2.0;
+    cellFrame.size.width -= cellFrame.size.height + 2.0;
+  }
   [super drawWithFrame:cellFrame inView:controlView];
 }
 
 @end
+
+static HTREEITEM FindTreeItemByDataHold(const WDL_PtrList<HTREEITEM__> *list, SWELL_DataHold *srch)
+{
+  for (int x = 0; x < list->GetSize(); x ++)
+  {
+    HTREEITEM item = list->Get(x);
+    if (item && item->m_dh == srch) return item;
+  }
+  for (int x = 0; x < list->GetSize(); x ++)
+  {
+    HTREEITEM item = list->Get(x);
+    if (item && item->m_children.GetSize())
+    {
+      item = FindTreeItemByDataHold(&item->m_children,srch);
+      if (item) return item;
+    }
+  }
+  return NULL;
+}
 
 @implementation SWELL_TreeView
 STANDARD_CONTROL_NEEDSDISPLAY_IMPL("SysTreeView32")
@@ -434,11 +477,23 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL("SysTreeView32")
   HWND hwnd = (HWND)self, par = GetParent(hwnd);
   if (par)
   {
-    TVHITTESTINFO tht;
-    memset(&tht,0,sizeof(tht));
-    GetCursorPos(&tht.pt);
-    ScreenToClient(hwnd, &tht.pt);
-    HTREEITEM sel = TreeView_GetSelection(hwnd), hit = TreeView_HitTest(hwnd, &tht);
+    HTREEITEM hit = NULL;
+    if (m_items && [draggedItems count] > 0)
+    {
+      id obj = [draggedItems objectAtIndex:0];
+      if ([obj isKindOfClass:[SWELL_DataHold class]])
+        hit = FindTreeItemByDataHold(m_items, (SWELL_DataHold *)obj);
+    }
+    if (!hit)
+    {
+      TVHITTESTINFO tht;
+      memset(&tht,0,sizeof(tht));
+      GetCursorPos(&tht.pt);
+      ScreenToClient(hwnd, &tht.pt);
+      hit = TreeView_HitTest(hwnd, &tht);
+    }
+
+    HTREEITEM sel = TreeView_GetSelection(hwnd);
     if (hit && hit != sel) 
     {
       TreeView_SelectItem(hwnd,hit);
@@ -611,6 +666,7 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
 {
   if ((self = [super init]))
   {
+    m_subitem_images = false;
     m_selColors=0;
     m_fgColor = 0;
     ownermode_cnt=0;
@@ -750,14 +806,16 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
   }
   else
   {
-    char *p=NULL;
+    const char *p=NULL;
     SWELL_ListView_Row *r=0;
     if (m_items && m_cols && (r=m_items->Get(rowIndex))) 
     {
-      p=r->m_vals.Get(m_cols->Find(aTableColumn));
+      int col_idx = m_cols->Find(aTableColumn);
+      p=r->get_col_txt(col_idx);
       if (m_status_imagelist_type == LVSIL_STATE || m_status_imagelist_type == LVSIL_SMALL)
       {
-        image_idx=r->m_imageidx;
+        if (col_idx==0 || m_subitem_images)
+          image_idx=r->get_img_idx(col_idx);
       }
     }
     
@@ -815,7 +873,8 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
     m_start_item_clickmode=0;
     if (m_start_item >=0 && (m_fastClickMask&(1<<m_start_subitem)))
     {
-      NMLISTVIEW nmlv={{(HWND)self,(UINT_PTR)[self tag], NM_CLICK}, m_start_item, m_start_subitem, 0, 0, 0, {NSPOINT_TO_INTS(pt)}, };
+      int msg = [theEvent clickCount] > 1 ? NM_DBLCLK : NM_CLICK;
+      NMLISTVIEW nmlv={{(HWND)self,(UINT_PTR)[self tag], static_cast<UINT>(msg)}, m_start_item, m_start_subitem, 0, 0, 0, {NSPOINT_TO_INTS(pt)}, };
       SWELL_ListView_Row *row=m_items->Get(nmlv.iItem);
       if (row)
         nmlv.lParam = row->m_param;
@@ -1037,10 +1096,11 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
         {
           SWELL_ListView_Row *row=self->m_items ? self->m_items->Get(wParam) : NULL;
           *(char *)lParam = 0;
-          if (row && row->m_vals.Get(0))
+          const char *p;
+          if (row && (p=row->get_col_txt(0)))
           {
-            strcpy((char *)lParam, row->m_vals.Get(0));
-            return (LRESULT)strlen(row->m_vals.Get(0));
+            strcpy((char *)lParam, p);
+            return (LRESULT)strlen(p);
           }
         }
       return LB_ERR;
@@ -1049,7 +1109,7 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
           SWELL_ListView_Row *row=self->m_items ? self->m_items->Get(wParam) : NULL;
           if (row) 
           {
-            const char *p=row->m_vals.Get(0);
+            const char *p=row->get_col_txt(0);
             return p?strlen(p):0;
           }
         }
@@ -1065,7 +1125,7 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL( m_lbMode ? "SysListView32_LB" : "SysListView
             SWELL_ListView_Row *row=self->m_items->Get(x);
             if (row)
             {
-              const char *p = row->m_vals.Get(0);
+              const char *p = row->get_col_txt(0);
               if (p && !stricmp(p,(const char *)lParam)) return x;
             }
             if (++x >= n) x=0;
@@ -1530,8 +1590,11 @@ LONG_PTR GetWindowLong(HWND hwnd, int idx)
       else if ([pid allowsMixedState]) ret |= BS_AUTO3STATE;
       else if ([pid isKindOfClass:[SWELL_Button class]] && (tmp = (int)[pid swellGetRadioFlags]))
       {
-        ret |= BS_AUTORADIOBUTTON;
-        if (tmp&2) ret|=WS_GROUP;
+        if (tmp != 4096)
+        {
+          ret |= BS_AUTORADIOBUTTON;
+          if (tmp&2) ret|=WS_GROUP;
+        }
       }
       else ret |= BS_AUTOCHECKBOX; 
     }
@@ -1702,7 +1765,7 @@ STANDARD_CONTROL_NEEDSDISPLAY_IMPL("Button")
   if (self != nil) {
     m_userdata=0;
     m_swellGDIimage=0;
-    m_radioflags=0;
+    m_radioflags=0; // =4096 if not a checkbox at all
   }
   return self;
 }
@@ -2188,9 +2251,11 @@ void SetWindowPos(HWND hwnd, HWND hwndAfter, int x, int y, int cx, int cy, int f
             [v retain];
             [v removeFromSuperviewWithoutNeedingDisplay];
             [par addSubview:v positioned:omode relativeTo:viewafter];
-            [v release];
           
-            if (oldfoc) [[v window] makeFirstResponder:oldfoc];
+            if (oldfoc && [oldfoc isKindOfClass:[NSView class]] && [oldfoc window] == [v window])
+              [[v window] makeFirstResponder:oldfoc];
+
+            [v release];
           }
         }
       }
@@ -3091,6 +3156,16 @@ void ShowWindow(HWND hwnd, int cmd)
     {
       [pid orderOut:pid];
     }
+    else if (cmd==SW_SHOWMAXIMIZED)
+    {
+      if (![pid isZoomed]) [pid zoom:nil];
+      [pid orderFront:pid];
+    }
+    else if (cmd == SW_RESTORE)
+    {
+      if ([pid isZoomed]) [pid zoom:nil];
+      [pid orderFront:pid];
+    }
     else if (cmd == SW_SHOWMINIMIZED)
     {   
       // this ought to work
@@ -3111,6 +3186,8 @@ void ShowWindow(HWND hwnd, int cmd)
   
   switch (cmd)
   {
+    case SW_RESTORE:
+    case SW_SHOWMAXIMIZED:
     case SW_SHOW:
     case SW_SHOWNA:
       [((NSView *)pid) setHidden:NO];
@@ -3209,6 +3286,7 @@ static int m_make_radiogroupcnt;
 
 void SWELL_MakeSetCurParms(float xscale, float yscale, float xtrans, float ytrans, HWND parent, bool doauto, bool dosizetofit)
 {
+  if (parent) s_prefix_removals.Empty(true,free);
   m_make_radiogroupcnt=0;
   m_sizetofits=dosizetofit;
   m_lastdoauto.origin.x = 0;
@@ -3276,6 +3354,7 @@ HWND SWELL_MakeButton(int def, const char *label, int idx, int x, int y, int w, 
   UINT_PTR a=(UINT_PTR)label;
   if (a < 65536) label = "ICONTEMP";
   SWELL_Button *button=[[SWELL_Button alloc] init];
+  [button swellSetRadioFlags:4096];
   if (flags & BS_BITMAP)
   {
     SWELL_ImageButtonCell * cell = [[SWELL_ImageButtonCell alloc] init];
@@ -4032,6 +4111,7 @@ HWND SWELL_MakeControl(const char *cname, int idx, const char *classname, int st
       [button setCell:cell];
       [cell release];
       //NSButtonCell
+      [button swellSetRadioFlags:4096];
     }
     else // normal button
     {
@@ -4043,6 +4123,7 @@ HWND SWELL_MakeControl(const char *cname, int idx, const char *classname, int st
       }
       if ((style & BS_XPOSITION_MASK) == BS_LEFT) [button setAlignment:NSLeftTextAlignment];
 //      fr.size.width+=8;
+      [button swellSetRadioFlags:4096];
     }
     
     if (m_transform.size.width < minwidfontadjust)
@@ -4265,6 +4346,11 @@ void ListView_SetExtendedListViewStyleEx(HWND h, int mask, int style)
 {
   if (WDL_NOT_NORMALLY(!h || ![(id)h isKindOfClass:[SWELL_ListView class]])) return;
   SWELL_ListView *tv=(SWELL_ListView*)h;
+
+  if (mask & LVS_EX_SUBITEMIMAGES)
+  {
+    tv->m_subitem_images = (style & LVS_EX_SUBITEMIMAGES) != 0;
+  }
   
   if (mask&LVS_EX_GRIDLINES)
   {
@@ -4302,15 +4388,23 @@ void ListView_SetImageList(HWND h, HIMAGELIST imagelist, int which)
   
   v->m_status_imagelist_type=which;
   v->m_status_imagelist=(WDL_PtrList<HGDIOBJ__> *)imagelist;
-  if (v->m_cols && v->m_cols->GetSize()>0)
+  if (v->m_cols)
   {
-    NSTableColumn *col=(NSTableColumn*)v->m_cols->Get(0);
-    if (![col isKindOfClass:[SWELL_StatusCell class]])
+    for (int x = 0; x < v->m_cols->GetSize(); x ++)
     {
-      SWELL_StatusCell *cell=[[SWELL_StatusCell alloc] initNewCell];
-      [cell setWraps:NO];
-      [col setDataCell:cell];
-      [cell release];
+      NSTableColumn *col=(NSTableColumn*)v->m_cols->Get(x);
+      if (![col isKindOfClass:[SWELL_StatusCell class]])
+      {
+        SWELL_StatusCell *cell=[[SWELL_StatusCell alloc] initNewCell:!x];
+        NSTextFieldCell *oldcell = [col dataCell];
+        if (oldcell) [cell setAlignment:[oldcell alignment]];
+
+        [cell setWraps:NO];
+        [col setDataCell:cell];
+        [cell release];
+      }
+      if (!v->m_subitem_images)
+        break;
     }
   }  
 }
@@ -4350,24 +4444,21 @@ void ListView_InsertColumn(HWND h, int pos, const LVCOLUMN *lvc)
     [[col headerCell] setStringValue:lbl];
     [lbl release];
   }
-  
-  if (!pos && v->m_status_imagelist) 
+
+  SWELL_ListViewCell *cell;
+  if ((!pos || v->m_subitem_images) && v->m_status_imagelist)
   {
-    SWELL_StatusCell *cell=[[SWELL_StatusCell alloc] initNewCell];
-    [cell setWraps:NO];
-    [col setDataCell:cell];
-    [cell release];
+    cell = [[SWELL_StatusCell alloc] initNewCell:!pos];
   }
   else
   {  
-    SWELL_ListViewCell *cell = [[SWELL_ListViewCell alloc] initTextCell:@""];
-    [col setDataCell:cell];
-    [cell setWraps:NO];
-   
-    if (lvc->fmt == LVCFMT_CENTER) [cell setAlignment:NSCenterTextAlignment];
-    else if (lvc->fmt == LVCFMT_RIGHT) [cell setAlignment:NSRightTextAlignment];
-    [cell release];
+    cell = [[SWELL_ListViewCell alloc] initTextCell:@""];
   }
+  [cell setWraps:NO];
+  if (lvc->fmt == LVCFMT_CENTER) [cell setAlignment:NSCenterTextAlignment];
+  else if (lvc->fmt == LVCFMT_RIGHT) [cell setAlignment:NSRightTextAlignment];
+  [col setDataCell:cell];
+  [cell release];
 
   [v addTableColumn:col];
   if (pos >= 0 && pos < v->m_cols->GetSize())
@@ -4468,7 +4559,7 @@ int ListView_InsertItem(HWND h, const LVITEM *item)
   }
   
   SWELL_ListView_Row *nr=new SWELL_ListView_Row;
-  nr->m_vals.Add(strdup((item->mask & LVIF_TEXT) ? item->pszText : ""));
+  nr->add_col((item->mask & LVIF_TEXT) ? item->pszText : "");
   if (item->mask & LVIF_PARAM) nr->m_param = item->lParam;
   tv->m_items->Insert(a,nr);
   
@@ -4476,7 +4567,7 @@ int ListView_InsertItem(HWND h, const LVITEM *item)
   
   if ((item->mask&LVIF_STATE) && (item->stateMask & (0xff<<16)))
   {
-    nr->m_imageidx=(item->state>>16)&0xff;
+    nr->set_img_idx(0,(item->state>>16)&0xff);
   }
   
   [tv reloadData];
@@ -4522,16 +4613,15 @@ void ListView_SetItemText(HWND h, int ipos, int cpos, const char *txt)
   SWELL_ListView_Row *p=tv->m_items->Get(ipos);
   if (!p) return;
   int x;
-  for (x = p->m_vals.GetSize(); x < cpos; x ++)
+  for (x = p->get_num_cols(); x < cpos; x ++)
   {
-    p->m_vals.Add(strdup(""));
+    p->add_col("");
   }
-  if (cpos < p->m_vals.GetSize())
+  if (cpos < p->get_num_cols())
   {
-    free(p->m_vals.Get(cpos));
-    p->m_vals.Set(cpos,strdup(txt));
+    p->set_col_txt(cpos,strdup(txt));
   }
-  else p->m_vals.Add(strdup(txt));
+  else p->add_col(txt);
     
   [tv setNeedsDisplay];
 }
@@ -4583,7 +4673,7 @@ bool ListView_SetItem(HWND h, LVITEM *item)
     }
     if ((item->mask&LVIF_IMAGE) && item->iImage >= 0)
     {
-      row->m_imageidx=item->iImage+1;
+      row->set_img_idx(item->iSubItem,item->iImage+1);
       ListView_RedrawItems(h, item->iItem, item->iItem);
     }
   }
@@ -4613,14 +4703,14 @@ bool ListView_GetItem(HWND h, LVITEM *item)
     if (item->mask & LVIF_PARAM) item->lParam=row->m_param;
     if (item->mask & LVIF_TEXT) if (item->pszText && item->cchTextMax>0)
     {
-      char *p=row->m_vals.Get(item->iSubItem);
+      const char *p=row->get_col_txt(item->iSubItem);
       lstrcpyn_safe(item->pszText,p?p:"",item->cchTextMax);
     }
       if (item->mask & LVIF_STATE)
       {
         if (item->stateMask & (0xff<<16))
         {
-          item->state|=row->m_imageidx<<16;
+          item->state|=row->get_img_idx(item->iSubItem)<<16;
         }
       }
   }
@@ -4666,7 +4756,7 @@ int ListView_GetItemState(HWND h, int ipos, UINT mask)
     if (!row) return 0;  
     if (mask & (0xff<<16))
     {
-      flag|=row->m_imageidx<<16;
+      flag|=row->get_img_idx(0)<<16;
     }
   }
   else
@@ -4752,9 +4842,9 @@ bool ListView_SetItemState(HWND h, int ipos, UINT state, UINT statemask)
     if (!row) return false;  
     if (statemask & (0xff<<16))
     {
-      if (row->m_imageidx!=((state>>16)&0xff))
+      if (row->get_img_idx(0)!=((state>>16)&0xff))
       {
-        row->m_imageidx=(state>>16)&0xff;
+        row->set_img_idx(0,(state>>16)&0xff);
         doref=1;
       }
     }
@@ -5293,7 +5383,7 @@ HWND WindowFromPoint(POINT p)
   {
     NSWindow *wnd = kw;
     if (x>=0) wnd=[windows objectAtIndex:x];
-    if (wnd && [wnd isVisible])
+    if (wnd && [wnd isVisible] && HTTRANSPARENT != SendMessage((HWND)wnd, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y)))
     {
       NSRect fr=[wnd frame];
       if (p.x >= fr.origin.x && p.x < fr.origin.x + fr.size.width &&
@@ -5905,7 +5995,7 @@ HANDLE GetClipboardData(UINT type)
           if ([url isFileURL])
           {
             const char *ptr = [[url path] UTF8String];
-            if (ptr && *ptr) flist.Add(ptr, strlen(ptr)+1);
+            if (ptr && *ptr) flist.Add(ptr, (int)strlen(ptr)+1);
           }
         }
         if (flist.GetSize()>sizeof(DROPFILES))
@@ -7217,6 +7307,16 @@ int SWELL_IsRetinaHWND(HWND hwnd)
     if (str.size.width > 1.9) return 1;
   }
   return 0;
+}
+
+const char *SWELL_GetRecentPrefixRemoval(const char *p)
+{
+  for (int x = 0; x < s_prefix_removals.GetSize(); x ++)
+  {
+    const char *s = s_prefix_removals.Get(x);
+    if (!strcmp(s,p)) return s+strlen(s)+1;
+  }
+  return NULL;
 }
 
 #endif

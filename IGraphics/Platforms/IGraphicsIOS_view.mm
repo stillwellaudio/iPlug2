@@ -149,7 +149,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   IPopupMenu::Item* pItem = mMenu->GetItem(cellIndex);
   IPopupMenu* pSubMenu = pItem->GetSubmenu();
   
-  if(pSubMenu)
+  if (pSubMenu)
   {
     IGRAPHICS_UITABLEVC* newViewController = [[IGRAPHICS_UITABLEVC alloc] initWithIPopupMenuAndIGraphics: pSubMenu : mGraphics];
     [newViewController setTitle:[NSString stringWithUTF8String:CStringHasContents(pSubMenu->GetRootTitle()) ? pSubMenu->GetRootTitle() : pItem->GetText()]];
@@ -158,11 +158,11 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
     return;
   }
 
-  if(pItem->GetIsChoosable())
+  if (pItem->GetIsChoosable())
   {
     mMenu->SetChosenItemIdx(cellIndex);
     
-    if(mMenu->GetFunction())
+    if (mMenu->GetFunction())
       mMenu->ExecFunction();
     
     mGraphics->SetControlValueAfterPopupMenu(mMenu);
@@ -525,8 +525,10 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   mGraphics->ClearInTextEntryControl();
 }
 
-- (void) showMessageBox: (const char*) str : (const char*) caption : (EMsgBoxType) type : (IMsgBoxCompletionHanderFunc) completionHandler
+- (void) showMessageBox: (const char*) str : (const char*) caption : (EMsgBoxType) type : (IMsgBoxCompletionHandlerFunc) completionHandler
 {
+  [self endUserInput];
+
   NSString* titleNString = [NSString stringWithUTF8String:str];
   NSString* captionNString = [NSString stringWithUTF8String:caption];
   
@@ -585,9 +587,34 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   [self.window.rootViewController presentViewController:alertController animated:YES completion:nil];
 }
 
+- (void) promptForFile: (NSString*) fileName : (NSString*) path : (EFileAction) action : (NSArray*) contentTypes : (IFileDialogCompletionHandlerFunc) completionHandler
+{
+  [self endUserInput];
+
+  mFileDialogFunc = completionHandler;
+
+  UIDocumentPickerViewController* vc = NULL;
+  
+  if (action == EFileAction::Open)
+  {
+    vc = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:contentTypes asCopy:YES];
+  }
+  else
+  {
+    NSURL* url = [[NSURL alloc] initFileURLWithPath:path];
+    
+    vc = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[url]];
+  }
+  
+  [vc setDelegate:self];
+  
+  [self.window.rootViewController presentViewController:vc animated:YES completion:nil];
+}
+
 - (BOOL) promptForColor: (IColor&) color : (const char*) str : (IColorPickerHandlerFunc) func
 {
-#ifdef __IPHONE_14_0
+  [self endUserInput];
+
   UIColorPickerViewController* colorSelectionController = [[UIColorPickerViewController alloc] init];
   
   UIUserInterfaceIdiom idiom = [[UIDevice currentDevice] userInterfaceIdiom];
@@ -611,7 +638,6 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   mColorPickerHandlerFunc = func;
   
   [self.window.rootViewController presentViewController:colorSelectionController animated:YES completion:nil];
-#endif
 
   return false;
 }
@@ -808,10 +834,46 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   mGraphics->SetControlValueAfterPopupMenu(nullptr);
 }
 
-#ifdef __IPHONE_14_0
+- (void) documentPicker:(UIDocumentPickerViewController*) controller didPickDocumentsAtURLs:(NSArray <NSURL*>*) urls
+{
+  WDL_String fileName, path;
+  
+  if (urls.count == 1)
+  {
+    NSURL* pSource = urls[0];
+    NSString* pFullPath = [pSource path];
+    fileName.Set([pFullPath UTF8String]);
+    
+    NSString* pTruncatedPath = [pFullPath stringByDeletingLastPathComponent];
+
+    if (pTruncatedPath)
+    {
+      path.Set([pTruncatedPath UTF8String]);
+      path.Append("/");
+    }
+
+    if (mFileDialogFunc)
+      mFileDialogFunc(fileName, path);
+  }
+  else
+  {
+    // call with empty values
+    if (mFileDialogFunc)
+      mFileDialogFunc(fileName, path);
+  }
+}
+
+- (void) documentPickerWasCancelled:(UIDocumentPickerViewController*) controller
+{
+  WDL_String fileName, path;
+  
+  if (mFileDialogFunc)
+    mFileDialogFunc(fileName, path);
+}
+
 - (void) colorPickerViewControllerDidSelectColor:(UIColorPickerViewController*) viewController;
 {
-  if(mColorPickerHandlerFunc)
+  if (mColorPickerHandlerFunc)
   {
     IColor c = FromUIColor([viewController selectedColor]);
     mColorPickerHandlerFunc(c);
@@ -822,7 +884,6 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
 {
   mColorPickerHandlerFunc = nullptr;
 }
-#endif
 
 - (void) traitCollectionDidChange: (UITraitCollection*) previousTraitCollection
 {

@@ -80,11 +80,11 @@ void* WebViewEditorDelegate::OpenWindow(void* pParent)
   HELPER_VIEW* pHelperView = [[HELPER_VIEW alloc] initWithEditorDelegate: this];
   mHelperView = (void*) pHelperView;
 
-  if(pParentView) {
+  if (pParentView) {
     [pParentView addSubview: pHelperView];
   }
   
-  if(mEditorInitFunc)
+  if (mEditorInitFunc)
     mEditorInitFunc();
 
   return mHelperView;
@@ -97,5 +97,5 @@ void WebViewEditorDelegate::Resize(int width, int height)
   HELPER_VIEW* pHelperView = (HELPER_VIEW*) mHelperView;
   [pHelperView setFrame:CGRectMake(0, 0, w, h)];
   SetWebViewBounds(0, 0, w, h);
-  EditorResizeFromUI(width, height, false);
+  EditorResizeFromUI(width, height, true);
 }
