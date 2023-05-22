@@ -26,6 +26,7 @@ IGEditorDelegate::~IGEditorDelegate()
 
 void* IGEditorDelegate::OpenWindow(void* pParent)
 {
+  IGEditorDelegate::CloseWindow();
   if(!mGraphics)
   {
     mGraphics = std::unique_ptr<IGraphics>(CreateGraphics());
