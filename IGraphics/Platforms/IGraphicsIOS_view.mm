@@ -607,6 +607,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   }
   
   [vc setDelegate:self];
+  [vc setAllowsMultipleSelection:NO];
   
   [self.window.rootViewController presentViewController:vc animated:YES completion:nil];
 }
