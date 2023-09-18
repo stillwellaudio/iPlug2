@@ -80,6 +80,9 @@ public:
 
   void SetOffline(bool renderingOffline) { IPlugProcessor::SetRenderingOffline(renderingOffline); }
 
+  void OnVCKeyPressDown(IKeyPress keypress);
+  void OnVCKeyPressUp(IKeyPress keypress);
+
   /** Override this method, in special cases, to request data from the iOS app wrapper
    * the data must exist!
    */
