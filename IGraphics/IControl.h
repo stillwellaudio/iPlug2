@@ -2297,6 +2297,47 @@ protected:
   static constexpr float mInset = 10.f;
 };
 
+/** A meta control that let's you swap between child controls based on the state of a parameter */
+class IControlStack : public IContainerBase
+{
+public:
+  static void DefaultResizeFunc(IContainerBase* pParent, const IRECT& r) {
+    pParent->ForAllChildrenFunc([=](int idx, IControl* pControl){
+      pControl->SetTargetAndDrawRECTs(r);
+    });
+  }
+  
+  IControlStack(const IRECT& bounds, int paramIdx,
+                     IContainerBase::AttachFunc attachFunc,
+                     IContainerBase::ResizeFunc resizeFunc = DefaultResizeFunc)
+  : IContainerBase(bounds, attachFunc, resizeFunc)
+  {
+    SetParamIdx(paramIdx);
+  }
+  
+  void SetValueFromDelegate(double value, int valIdx = 0) override
+  {
+    IControl::SetValueFromDelegate(value, valIdx);
+    ShowSubcontrol(GetParam()->Int());
+  }
+
+  void Hide(bool hide) override
+  {
+    IControl::Hide(hide);
+    ShowSubcontrol(GetParam()->Int());
+  }
+
+private:
+  void ShowSubcontrol(int indexToShow)
+  {
+    auto parentIsHidden = IsHidden();
+    ForAllChildrenFunc([=](int index, IControl* pControl){
+      auto shouldHide = parentIsHidden ? true : index != indexToShow;
+      pControl->Hide(shouldHide);
+    });
+  }
+};
+
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE
 
