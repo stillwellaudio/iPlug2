@@ -26,7 +26,6 @@ using namespace iplug;
 using namespace igraphics;
 #endif
 
-
 // check the input and output devices, find matching srs
 void IPlugAPPHost::PopulateSampleRateList(HWND hwndDlg, RtAudio::DeviceInfo* inputDevInfo, RtAudio::DeviceInfo* outputDevInfo)
 {
