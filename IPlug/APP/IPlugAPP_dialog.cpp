@@ -142,7 +142,7 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   {
     SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_IN_DEV,CB_ADDSTRING,0,(LPARAM)GetAudioDeviceName(mAudioInputDevs[i]).c_str());
 
-    if (!strcmp(GetAudioDeviceName(mAudioInputDevIds[i]).c_str(), mState.mAudioInDev.Get()))
+    if (std::string_view(GetAudioDeviceName(mAudioInputDevs[i])) == mState.mAudioInDev.Get())
       indevidx = i;
   }
 
@@ -150,7 +150,7 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   {
     SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_OUT_DEV,CB_ADDSTRING,0,(LPARAM)GetAudioDeviceName(mAudioOutputDevs[i]).c_str());
 
-    if (!strcmp(GetAudioDeviceName(mAudioOutputDevIds[i]).c_str(), mState.mAudioOutDev.Get()))
+    if (std::string_view(GetAudioDeviceName(mAudioOutputDevs[i])) == mState.mAudioOutDev.Get())
       outdevidx = i;
   }
 
