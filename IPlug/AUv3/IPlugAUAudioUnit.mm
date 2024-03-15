@@ -789,10 +789,22 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
 {
   // Get the URL for the iCloud container directory
   NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *containerURL = [fileManager URLForUbiquityContainerIdentifier:nil]; // Use your container identifier if needed
-  NSURL *presetsDirectoryURL = [containerURL URLByAppendingPathComponent:@"Documents/Presets"]; // Adjust path as needed
+  NSURL *parentFolderURL = [fileManager URLForUbiquityContainerIdentifier:nil];
   
-  // Enumerate .aupreset files in the directory
+  // if iCloud is not available, fall back to the "On this iPad location"
+  if (!parentFolderURL)
+  {
+    NSArray* pPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString* pDocumentsDirectory = [pPaths objectAtIndex:0];
+    parentFolderURL = [NSURL fileURLWithPath:pDocumentsDirectory];
+  }
+  else
+  {
+    parentFolderURL = [parentFolderURL URLByAppendingPathComponent:@"Documents"];
+  }
+  
+  NSURL *presetsDirectoryURL = [parentFolderURL URLByAppendingPathComponent:@"Presets"];
+  
   NSDirectoryEnumerator<NSURL *> *enumerator = [fileManager enumeratorAtURL:presetsDirectoryURL
                                                 includingPropertiesForKeys:@[NSURLNameKey, NSURLIsDirectoryKey]
                                                 options:NSDirectoryEnumerationSkipsHiddenFiles
@@ -829,8 +841,23 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
   // TODO: check outError?
   
   NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *containerURL = [fileManager URLForUbiquityContainerIdentifier:nil]; // TODO!
-  NSURL *presetsDirectoryURL = [containerURL URLByAppendingPathComponent:@"Documents/Presets"];
+
+  NSURL *parentFolderURL = [fileManager URLForUbiquityContainerIdentifier:nil];
+  
+  // if iCloud is not available, fall back to the "On this iPad location"
+  if (!parentFolderURL)
+  {
+    NSArray* pPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString* pDocumentsDirectory = [pPaths objectAtIndex:0];
+    parentFolderURL = [NSURL fileURLWithPath:pDocumentsDirectory];
+  }
+  else
+  {
+    parentFolderURL = [parentFolderURL URLByAppendingPathComponent:@"Documents"];
+  }
+  
+  NSURL *presetsDirectoryURL = [parentFolderURL URLByAppendingPathComponent:@"Presets"];
+
   
   [fileManager createDirectoryAtURL:presetsDirectoryURL withIntermediateDirectories:YES attributes:nil error:nil];
   
@@ -852,20 +879,24 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
     return NO;
   }
   
-  // Get the URL for the iCloud container directory
   NSFileManager *fileManager = [NSFileManager defaultManager];
-  NSURL *containerURL = [fileManager URLForUbiquityContainerIdentifier:nil]; // Use your specific container identifier if needed
-  if (!containerURL) 
+
+  NSURL *parentFolderURL = [fileManager URLForUbiquityContainerIdentifier:nil];
+  
+  // if iCloud is not available, fall back to the "On this iPad location"
+  if (!parentFolderURL)
   {
-    if (outError) 
-    {
-      *outError = [NSError errorWithDomain:NSOSStatusErrorDomain code:kAudioUnitErr_NoConnection userInfo:@{NSLocalizedDescriptionKey: @"Unable to access iCloud container."}];
-    }
-    return NO;
+    NSArray* pPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString* pDocumentsDirectory = [pPaths objectAtIndex:0];
+    parentFolderURL = [NSURL fileURLWithPath:pDocumentsDirectory];
+  }
+  else
+  {
+    parentFolderURL = [parentFolderURL URLByAppendingPathComponent:@"Documents"];
   }
   
-  // Construct the full path to the preset file
-  NSURL *presetsDirectoryURL = [containerURL URLByAppendingPathComponent:@"Documents/Presets"];
+  NSURL *presetsDirectoryURL = [parentFolderURL URLByAppendingPathComponent:@"Presets"];
+
   NSString *presetFileName = [userPreset.name stringByAppendingPathExtension:@"aupreset"];
   NSURL *presetFileURL = [presetsDirectoryURL URLByAppendingPathComponent:presetFileName];
   
