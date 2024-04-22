@@ -10,6 +10,7 @@
 #include "SkMaskFilter.h"
 #include "SkFont.h"
 #include "SkFontMetrics.h"
+#include "SkImageFilters.h"
 #include "SkTypeface.h"
 #include "SkVertices.h"
 #include "SkSwizzle.h"
@@ -883,6 +884,39 @@ static size_t CalcRowBytes(int width)
 {
   width = ((width + 7) & (-8));
   return width * sizeof(uint32_t);
+}
+
+void IGraphicsSkia::ApplyLayerDropShadow(ILayerPtr& layer, const IShadow& shadow)
+{
+  auto makeFilter = [&shadow](float scale)
+  {
+    const auto dx = shadow.mXOffset * scale;
+    const auto dy = shadow.mXOffset * scale;
+    const auto r = shadow.mBlurSize * scale / 2.718281f; // (E can be approximated here);
+    const auto color = SkiaColor(shadow.mPattern.GetStop(0).mColor, nullptr);
+    
+    if (shadow.mDrawForeground)
+      return SkImageFilters::DropShadow(dx, dy, r, r, color, nullptr);
+    else
+      return SkImageFilters::DropShadowOnly(dx, dy, r, r, color, nullptr);
+  };
+  
+  auto shadowFilter = makeFilter(layer->GetAPIBitmap()->GetScale());
+  
+  SkPaint p;
+  SkMatrix m;
+  m.reset();
+  
+  p.setAntiAlias(true);
+  p.setImageFilter(shadowFilter);
+
+  sk_sp<SkSurface> surface = layer->GetAPIBitmap()->GetBitmap()->mSurface;
+  SkCanvas* pCanvas = surface->getCanvas();
+  sk_sp<SkImage> contents = surface->makeImageSnapshot();
+  
+  pCanvas->setMatrix(m);
+  pCanvas->clear(SK_ColorTRANSPARENT);
+  pCanvas->drawImage(contents.get(), 0.0, 0.0, SkSamplingOptions(), &p);
 }
 
 void IGraphicsSkia::GetLayerBitmapData(const ILayerPtr& layer, RawBitmapData& data)
