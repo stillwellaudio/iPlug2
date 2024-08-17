@@ -55,6 +55,7 @@ if [ "$#" -eq 2 ]; then
   skia_enable_pdf = false
   skia_enable_gpu = true
   skia_enable_skparagraph = true
+  skia_enable_skunicode = true
   cc = "clang"
   cxx = "clang++"
   clang_win = "C:\Program Files\LLVM"
