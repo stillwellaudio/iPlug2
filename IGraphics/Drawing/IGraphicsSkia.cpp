@@ -13,6 +13,13 @@
 #include "SkTypeface.h"
 #include "SkVertices.h"
 #include "SkSwizzle.h"
+#if !defined IGRAPHICS_NO_SKIA_SKPARAGRAPH
+#include "modules/skparagraph/include/FontCollection.h"
+#include "modules/skparagraph/include/Paragraph.h"
+#include "modules/skparagraph/include/ParagraphBuilder.h"
+#include "modules/skparagraph/include/ParagraphStyle.h"
+#include "modules/skparagraph/include/TextStyle.h"
+#endif
 #pragma warning( pop )
 
 #if defined OS_MAC || defined OS_IOS
@@ -272,6 +279,12 @@ IGraphicsSkia::IGraphicsSkia(IGEditorDelegate& dlg, int w, int h, int fps, float
 #endif
   StaticStorage<Font>::Accessor storage(sFontCache);
   storage.Retain();
+  
+#if !defined IGRAPHICS_NO_SKIA_SKPARAGRAPH
+  mFontCollection = sk_make_sp<skia::textlayout::FontCollection>();
+  mFontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+  mFontCollection->enableFontFallback();
+#endif
 }
 
 IGraphicsSkia::~IGraphicsSkia()
@@ -952,6 +965,74 @@ void IGraphicsSkia::DrawFastDropShadow(const IRECT& innerBounds, const IRECT& ou
   
   paint.setMaskFilter(SkMaskFilter::MakeBlur(kSolid_SkBlurStyle, blur * 0.5)); // 0.5 seems to match nanovg
   mCanvas->drawRoundRect(r, roundness, roundness, paint);
+}
+
+void IGraphicsSkia::DrawMultiLineText(const IText& text, const char* str, const IRECT& bounds, const IBlend* pBlend)
+{
+#if !defined IGRAPHICS_NO_SKIA_SKPARAGRAPH
+  using namespace skia::textlayout;
+  
+  auto ConvertTextAlign = [](EAlign align) {
+    switch (align)
+    {
+      case EAlign::Near: return TextAlign::kLeft;
+      case EAlign::Center: return TextAlign::kCenter;
+      case EAlign::Far: return TextAlign::kRight;
+      default: return TextAlign::kLeft;
+    }
+  };
+
+  ParagraphStyle paragraphStyle;
+  paragraphStyle.setTextAlign(ConvertTextAlign(text.mAlign));
+  
+  auto pBuilder = ParagraphBuilder::make(paragraphStyle, mFontCollection);
+  
+  TextStyle textStyle;
+  textStyle.setColor(SkiaColor(text.mFGColor, pBlend));
+  
+  std::string fontFamily = text.mFont;
+      
+  size_t pos = fontFamily.find('-');
+  if (pos != std::string::npos)
+  {
+    fontFamily = fontFamily.substr(0, pos);
+  }
+  
+  textStyle.setFontFamilies({SkString(fontFamily)});
+  textStyle.setFontSize(text.mSize * 0.9);
+  textStyle.setFontStyle(SkFontStyle(SkFontStyle::kNormal_Weight,
+                                     SkFontStyle::kNormal_Width,
+                                     SkFontStyle::kUpright_Slant));
+  
+  pBuilder->pushStyle(textStyle);
+  pBuilder->addText(str);
+  pBuilder->pop();
+  
+  auto pParagraph = pBuilder->Build();
+  
+  pParagraph->layout(bounds.W());
+  
+  float yOffset = 0;
+  switch (text.mVAlign)
+  {
+    case EVAlign::Top:
+      yOffset = 0;
+      break;
+    case EVAlign::Middle:
+      yOffset = (bounds.H() - pParagraph->getHeight()) / 2;
+      break;
+    case EVAlign::Bottom:
+      yOffset = bounds.H() - pParagraph->getHeight();
+      break;
+  }
+    
+  mCanvas->save();
+  mCanvas->translate(bounds.L, bounds.T + yOffset);
+  pParagraph->paint(mCanvas, 0, 0);
+  mCanvas->restore();
+#else
+  DrawText(text, str, bounds, pBlend);
+#endif
 }
 
 const char* IGraphicsSkia::GetDrawingAPIStr()
