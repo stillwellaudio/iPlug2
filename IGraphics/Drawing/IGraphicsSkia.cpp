@@ -23,6 +23,8 @@
 #include "modules/skparagraph/include/ParagraphBuilder.h"
 #include "modules/skparagraph/include/ParagraphStyle.h"
 #include "modules/skparagraph/include/TextStyle.h"
+#include "modules/skshaper/include/SkShaper.h"
+#include "modules/skunicode/include/SkUnicode_icu.h"
 #endif
 #pragma warning( pop )
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
@@ -999,6 +1001,19 @@ void IGraphicsSkia::DrawFastDropShadow(const IRECT& innerBounds, const IRECT& ou
   mCanvas->drawRoundRect(r, roundness, roundness, paint);
 }
 
+
+static sk_sp<SkUnicode> get_unicode()
+{
+  sk_sp<SkUnicode> unicode = SkUnicodes::ICU::Make();
+  if (!unicode)
+  {
+    DBGMSG("Could not load unicode data\n");
+    std::abort();
+  }
+
+  return unicode;
+}
+
 void IGraphicsSkia::DrawMultiLineText(const IText& text, const char* str, const IRECT& bounds, const IBlend* pBlend)
 {
 #if !defined IGRAPHICS_NO_SKIA_SKPARAGRAPH
@@ -1016,8 +1031,8 @@ void IGraphicsSkia::DrawMultiLineText(const IText& text, const char* str, const 
 
   ParagraphStyle paragraphStyle;
   paragraphStyle.setTextAlign(ConvertTextAlign(text.mAlign));
-  
-  auto pBuilder = ParagraphBuilder::make(paragraphStyle, mFontCollection);
+
+  auto pBuilder = ParagraphBuilder::make(paragraphStyle, mFontCollection, get_unicode());
 
   assert(pBuilder && "Paragraph Builder couldn't be created");
   
