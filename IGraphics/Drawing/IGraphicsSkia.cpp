@@ -5,25 +5,25 @@
 
 #pragma warning( push )
 #pragma warning( disable : 4244 )
-#include "SkDashPathEffect.h"
-#include "SkGradientShader.h"
-#include "SkMaskFilter.h"
-#include "SkBlurTypes.h"
-#include "SkFont.h"
-#include "SkFontMetrics.h"
-#include "SkTypeface.h"
-#include "SkVertices.h"
-#include "SkSwizzle.h"
-#include "SkBitmap.h"
-#include "SkFontMgr.h"
-#include "SkPathEffect.h"
+#include "include/core/SkMaskFilter.h"
+#include "include/core/SkBlurTypes.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontMetrics.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkVertices.h"
+#include "include/core/SkSwizzle.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkPathEffect.h"
+#include "include/effects/SkDashPathEffect.h"
+#include "include/effects/SkGradientShader.h"
 #pragma warning( pop )
 //#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/graphite/Surface.h"
 #include "include/gpu/GrBackendSurface.h"
 
 #if defined OS_MAC || defined OS_IOS
-  #include "SkCGUtils.h"
+  #include "include/utils/mac/SkCGUtils.h"
   #if defined IGRAPHICS_GL2
     #error SKIA doesn't work correctly with IGRAPHICS_GL2
   #elif defined IGRAPHICS_GL3
