@@ -18,7 +18,8 @@
 #include "SkFontMgr.h"
 #include "SkPathEffect.h"
 #pragma warning( pop )
-#include "include/gpu/ganesh/SkSurfaceGanesh.h"
+//#include "include/gpu/ganesh/SkSurfaceGanesh.h"
+#include "include/gpu/graphite/Surface.h"
 #include "include/gpu/GrBackendSurface.h"
 
 #if defined OS_MAC || defined OS_IOS
@@ -31,9 +32,14 @@
     // even though this is a .cpp we are in an objc(pp) compilation unit
     #import <Metal/Metal.h>
     #import <QuartzCore/CAMetalLayer.h>
-    #include "include/gpu/ganesh/mtl/GrMtlBackendContext.h"
-    #include "include/gpu/ganesh/mtl/GrMtlDirectContext.h"
-    #include "include/gpu/ganesh/mtl/GrMtlBackendSurface.h"
+//    #include "include/gpu/ganesh/mtl/GrMtlBackendContext.h"
+//    #include "include/gpu/ganesh/mtl/GrMtlDirectContext.h"
+//    #include "include/gpu/ganesh/mtl/GrMtlBackendSurface.h"
+    #include "include/gpu/graphite/mtl/MtlBackendContext.h"
+    #include "include/gpu/graphite/mtl/MtlGraphiteTypes.h"
+    #include "include/gpu/graphite/mtl/MtlGraphiteUtils.h"
+    #include "include/gpu/graphite/Context.h"
+
   #elif !defined IGRAPHICS_CPU
     #error Define either IGRAPHICS_GL2, IGRAPHICS_GL3, IGRAPHICS_METAL, or IGRAPHICS_CPU for IGRAPHICS_SKIA with OS_MAC
   #endif
@@ -54,8 +60,8 @@
 #endif
 
 #if defined IGRAPHICS_GL
-  #include "include/gpu/ganesh/gl/GrGlDirectContext.h"
-  #include "include/gpu/ganesh/gl/GrGlBackendSurface.h"
+//  #include "include/gpu/ganesh/gl/GrGlDirectContext.h"
+//  #include "include/gpu/ganesh/gl/GrGlBackendSurface.h"
   #include "gl/GrGLInterface.h"
 #endif
 
@@ -348,10 +354,17 @@ void IGraphicsSkia::OnViewInitialized(void* pContext)
   CAMetalLayer* pMTLLayer = (CAMetalLayer*) pContext;
   id<MTLDevice> device = pMTLLayer.device;
   id<MTLCommandQueue> commandQueue = [device newCommandQueue];
-  GrMtlBackendContext backendContext = {};
-  backendContext.fDevice.retain((__bridge GrMTLHandle) device);
-  backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
-  mGrContext = GrDirectContexts::MakeMetal(backendContext);
+  
+  skgpu::graphite::MtlBackendContext backendContext = {};
+  backendContext.fDevice.retain((__bridge CFTypeRef) device);
+  backendContext.fQueue.retain((__bridge CFTypeRef) commandQueue);
+  skgpu::graphite::ContextOptions options;
+  mGrContext = skgpu::graphite::ContextFactory::MakeMetal(backendContext, options);
+  
+//  GrMtlBackendContext backendContext = {};
+//  backendContext.fDevice.retain((__bridge GrMTLHandle) device);
+//  backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
+//  mGrContext = GrDirectContexts::MakeMetal(backendContext);
   mMTLDevice = (void*) device;
   mMTLCommandQueue = (void*) commandQueue;
   mMTLLayer = pContext;
@@ -382,11 +395,11 @@ void IGraphicsSkia::DrawResize()
   auto h = static_cast<int>(std::ceil(static_cast<float>(WindowHeight()) * GetScreenScale()));
   
 #if defined IGRAPHICS_GL || defined IGRAPHICS_METAL
-  if (mGrContext.get())
-  {
-    SkImageInfo info = SkImageInfo::MakeN32Premul(w, h);
-    mSurface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
-  }
+//  if (mGrContext.get())
+//  {
+//    SkImageInfo info = SkImageInfo::MakeN32Premul(w, h);
+//    mSurface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
+//  }
 #else
   #ifdef OS_WIN
     mSurface.reset();
@@ -452,10 +465,16 @@ void IGraphicsSkia::BeginFrame()
     
     id<CAMetalDrawable> drawable = [(CAMetalLayer*) mMTLLayer nextDrawable];
     
-    GrMtlTextureInfo fbInfo;
-    fbInfo.fTexture.retain((const void*)(drawable.texture));
-    auto backendRT = GrBackendRenderTargets::MakeMtl(width, height, fbInfo);
-    mScreenSurface = SkSurfaces::WrapBackendRenderTarget(mGrContext.get(), backendRT, kTopLeft_GrSurfaceOrigin, kBGRA_8888_SkColorType, nullptr, nullptr);
+//    GrMtlTextureInfo fbInfo;
+//    fbInfo.fTexture.retain((const void*)(drawable.texture));
+//    auto backendRT = GrBackendRenderTargets::MakeMtl(width, height, fbInfo);
+//    mScreenSurface = SkSurfaces::WrapBackendRenderTarget(mGrContext.get(), backendRT, kTopLeft_GrSurfaceOrigin, kBGRA_8888_SkColorType, nullptr, nullptr);
+    auto backendTex = skgpu::graphite::BackendTextures::MakeMetal(SkISize{width, height}, (CFTypeRef)drawable.texture);
+    skgpu::graphite::RecorderOptions options;
+
+    mGraphiteRecorder = mGrContext->makeRecorder(options);
+
+    mScreenSurface = SkSurfaces::WrapBackendTexture(mGraphiteRecorder.get(), backendTex, kBGRA_8888_SkColorType, nullptr, nullptr);
     
     mMTLDrawable = (void*) drawable;
     assert(mScreenSurface);
@@ -891,10 +910,10 @@ APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, float scale, do
   {
     surface = SkSurfaces::Raster(info);
   }
-  else
-  {
-    surface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
-  }
+//  else
+//  {
+//    surface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
+//  }
   #else
   surface = SkSurfaces::Raster(info);
   #endif

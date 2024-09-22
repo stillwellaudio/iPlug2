@@ -21,6 +21,10 @@
 #include "GrDirectContext.h"
 #pragma warning( pop )
 
+namespace skgpu::graphite {
+class Context;
+}
+
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
@@ -152,7 +156,8 @@ private:
 #endif
   
 #ifndef IGRAPHICS_CPU
-  sk_sp<GrDirectContext> mGrContext;
+  std::unique_ptr<skgpu::graphite::Context> mGrContext;
+  std::unique_ptr<skgpu::graphite::Recorder> mGraphiteRecorder;
   sk_sp<SkSurface> mScreenSurface;
 #endif
   
