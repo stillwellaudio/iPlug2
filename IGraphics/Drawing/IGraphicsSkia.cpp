@@ -395,11 +395,13 @@ void IGraphicsSkia::DrawResize()
   auto h = static_cast<int>(std::ceil(static_cast<float>(WindowHeight()) * GetScreenScale()));
   
 #if defined IGRAPHICS_GL || defined IGRAPHICS_METAL
-//  if (mGrContext.get())
-//  {
-//    SkImageInfo info = SkImageInfo::MakeN32Premul(w, h);
-//    mSurface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
-//  }
+  if (mGrContext.get())
+  {
+    skgpu::graphite::RecorderOptions options;
+    mGraphiteRecorder = mGrContext->makeRecorder(options);
+    SkImageInfo info = SkImageInfo::MakeN32Premul(w, h);
+    mSurface = SkSurfaces::RenderTarget(mGraphiteRecorder.get(), info, skgpu::Mipmapped::kNo);
+  }
 #else
   #ifdef OS_WIN
     mSurface.reset();
@@ -464,18 +466,8 @@ void IGraphicsSkia::BeginFrame()
     int height = WindowHeight() * GetScreenScale();
     
     id<CAMetalDrawable> drawable = [(CAMetalLayer*) mMTLLayer nextDrawable];
-    
-//    GrMtlTextureInfo fbInfo;
-//    fbInfo.fTexture.retain((const void*)(drawable.texture));
-//    auto backendRT = GrBackendRenderTargets::MakeMtl(width, height, fbInfo);
-//    mScreenSurface = SkSurfaces::WrapBackendRenderTarget(mGrContext.get(), backendRT, kTopLeft_GrSurfaceOrigin, kBGRA_8888_SkColorType, nullptr, nullptr);
     auto backendTex = skgpu::graphite::BackendTextures::MakeMetal(SkISize{width, height}, (CFTypeRef)drawable.texture);
-    skgpu::graphite::RecorderOptions options;
-
-    mGraphiteRecorder = mGrContext->makeRecorder(options);
-
     mScreenSurface = SkSurfaces::WrapBackendTexture(mGraphiteRecorder.get(), backendTex, kBGRA_8888_SkColorType, nullptr, nullptr);
-    
     mMTLDrawable = (void*) drawable;
     assert(mScreenSurface);
   }
@@ -910,10 +902,10 @@ APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, float scale, do
   {
     surface = SkSurfaces::Raster(info);
   }
-//  else
-//  {
-//    surface = SkSurfaces::RenderTarget(mGrContext.get(), skgpu::Budgeted::kYes, info);
-//  }
+  else
+  {
+    surface = SkSurfaces::RenderTarget(mGraphiteRecorder.get(), info, skgpu::Mipmapped::kNo);
+  }
   #else
   surface = SkSurfaces::Raster(info);
   #endif
