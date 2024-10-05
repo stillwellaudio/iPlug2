@@ -73,7 +73,7 @@
         document.getElementById("meter").value = value;
       }
     }
-  
+
     function onLoad() {
       document.getElementById("gain_knob").addEventListener('input', function(e) {
                                                           SPVFUI(0, e.target.value/100.)
@@ -84,18 +84,21 @@
 <body onload="onLoad()">
 <!--<h1>IPlugWebView</h1>-->
 <div>
-  <div class="left">
+  <div>
     <p>Gain</p>
     <!-- <input id="slider" type="range" onmousedown="BPCFUI(0)" oninput="SPVFUI(0, this.value/100.)" onmouseup="EPCFUI(0)"> -->
     <webaudio-knob id="gain_knob" min="0" max="100"></webaudio-knob>
     <button onclick="SendTestBinaryData()">Binary Test</button>
     <button onclick="SendTestMIDIData()">MIDI Test</button>
-    <progress id="meter">
+<!--    <progress id="meter">-->
   </div>
-  <div class="right">
+  <div>
     <button onclick="SAMFUI(0)">Small GUI</button>
     <button onclick="SAMFUI(1)">Medium GUI</button>
     <button onclick="SAMFUI(2)">Large GUI</button>
+  </div>
+  <div>
+    <a href="https://github.com/iPlug2/iPlug2/raw/refs/heads/master/Examples/IPlugWebUI/README.md">Download A file</a>
   </div>
 </div>
 </body>

@@ -88,3 +88,8 @@ void IPlugWebUI::ProcessMidiMsg(const IMidiMsg& msg)
   msg.PrintMsg();
   SendMidiMsg(msg);
 }
+
+void IPlugWebUI::DidDownloadFile(const char* path)
+{
+  DBGMSG("Downloaded file to %s\n", path);
+}
