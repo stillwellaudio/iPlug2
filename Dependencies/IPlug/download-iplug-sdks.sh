@@ -3,3 +3,4 @@
 ./download-vst3-sdk.sh
 ./download-clap-sdks.sh
 ./download-wam-sdk.sh
+./download-aax-sdks.sh
