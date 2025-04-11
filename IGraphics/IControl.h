@@ -1391,7 +1391,11 @@ protected:
    * @return IRECT The bounds over which mouse deltas will be used to calculate the amount dragging changes the control value */
   virtual IRECT GetKnobDragBounds() { return mTargetRECT; }
 
+  #ifdef __aarch64__
+  bool mHideCursorOnDrag = false;
+  #else
   bool mHideCursorOnDrag = true;
+  #endif
   EDirection mDirection;
   double mGearing;
   bool mMouseDown = false;
