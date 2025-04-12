@@ -306,7 +306,6 @@ protected: // these members are protected because they need to be access by the 
   std::unique_ptr<NChanDelayLine<sample>> mLatencyDelay = nullptr;
   /** Contains detailed information about the transport state */
   ITimeInfo mTimeInfo;
-
 };
 
 END_IPLUG_NAMESPACE
