@@ -186,8 +186,7 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* pC)
         setupInfo.mMeterIDs = stdMeterIDs;
     };
   };
-
-
+  
   if((PLUG_TYPE != 1) && (totalNInBuses > 1)) // Effect with sidechain input
   {
     int aaxTypeIdIdx = 0;
