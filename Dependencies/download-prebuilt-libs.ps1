@@ -60,7 +60,7 @@ if (Test-Path -Path $buildSrc) {
 }
 
 Write-Host "Extracting $zipPath..."
-Expand-Archive -LiteralPath $zipPath -DestinationPath $zipFile -Force
+Expand-Archive -LiteralPath $zipPath -DestinationPath . -Force
 
 Write-Host "Moving contents to Build directory..."
 Move-Item -Path (Join-Path $zipFile '*') -Destination 'Build' -Force
