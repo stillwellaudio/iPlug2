@@ -43,6 +43,7 @@ struct IGestureInfo;
 
 using IActionFunction = std::function<void(IControl*)>;
 using IAnimationFunction = std::function<void(IControl*)>;
+using IControlFunction = std::function<void(IControl*)>;
 using ILambdaDrawFunction = std::function<void(ILambdaControl*, IGraphics&, IRECT&)>;
 using IKeyHandlerFunc = std::function<bool(const IKeyPress& key, bool isUp)>;
 using IMsgBoxCompletionHandlerFunc = std::function<void(EMsgBoxResult result)>;
@@ -222,7 +223,7 @@ struct IColor
 {
   int A, R, G, B;
   
-    /** Create an IColor 
+  /** Create an IColor from ARGB values
    * @param a Alpha value (valid range 0-255)
    * @param r Red value (valid range 0-255)
    * @param g Green value (valid range 0-255)
@@ -412,7 +413,7 @@ struct IColor
   {
     WDL_String str(hexStr);
     
-    if(str.GetLength() == 7 && str.Get()[0] == '#')
+    if ((str.GetLength() == 7 || str.GetLength() == 9) && str.Get()[0] == '#')
     {
       str.DeleteSub(0, 1);
 
@@ -432,9 +433,12 @@ struct IColor
   }
   
   /** Convert the IColor to a hex string e.g. "#ffffffff" */
-  void ToColorCodeStr(WDL_String& str) const
+  void ToColorCodeStr(WDL_String& str, bool withAlpha = true) const
   {
-    str.SetFormatted(32, "#%02x%02x%02x%02x", R, G, B, A);
+    if (withAlpha)
+      str.SetFormatted(32, "#%02x%02x%02x%02x", R, G, B, A);
+    else
+      str.SetFormatted(32, "#%02x%02x%02x", R, G, B);
   }
   
   /** Create an IColor from Hue Saturation and Luminance values
@@ -743,14 +747,7 @@ const IText DEFAULT_TEXT = IText();
  * In IGraphics 0,0 is top left. */
 struct IRECT
 {
-  /** Left side of the rectangle (X) */
-  float L;
-  /** Top of the rectangle (Y) */
-  float T;
-  /** Right side of the rectangle (X + W) */
-  float R;
-  /** Bottom of the rectangle (Y + H) */
-  float B;
+  float L, T, R, B;
 
   /** Construct an empty IRECT  */
   IRECT()
@@ -788,6 +785,17 @@ struct IRECT
   static IRECT MakeXYWH(float l, float t, float w, float h)
   {
     return IRECT(l, t, l+w, t+h);
+  }
+  
+  /** Create a new IRECT of size (y,h) centred at the given position (x,y)
+   * @param x Mid horizontal point of new IRECT
+   * @param y Mid vertical point of new IRECT
+   * @param w Width of new IRECT
+   * @param h Height of new IRECT
+   * @return the new IRECT */
+  static IRECT MakeMidXYWH(float x, float y, float w, float h)
+  {
+    return IRECT(x-(w/2.0f), y-(h/2.0f), x+(w/2.0f), y+(h/2.0f));
   }
   
   /** @return bool true if all the fields of this IRECT are 0 */
@@ -1679,7 +1687,7 @@ struct IRECT
     return result;
   }
   
-  /** Print the IRECT's detailes to the console in Debug builds */
+  /** Print the IRECT's details to the console in Debug builds */
   void DBGPrint() { DBGMSG("L: %f, T: %f, R: %f, B: %f,: W: %f, H: %f\n", L, T, R, B, W(), H()); }
 };
 
@@ -2468,6 +2476,7 @@ static constexpr float DEFAULT_FRAME_THICKNESS = 1.f;
 static constexpr float DEFAULT_SHADOW_OFFSET = 3.f;
 static constexpr float DEFAULT_WIDGET_FRAC = 1.f;
 static constexpr float DEFAULT_WIDGET_ANGLE = 0.f;
+static constexpr EOrientation DEFAULT_LABEL_ORIENTATION = EOrientation::North;
 const IText DEFAULT_LABEL_TEXT {DEFAULT_TEXT_SIZE + 5.f, EVAlign::Top};
 const IText DEFAULT_VALUE_TEXT {DEFAULT_TEXT_SIZE, EVAlign::Bottom};
 
@@ -2488,6 +2497,7 @@ struct IVStyle
   IVColorSpec colorSpec = DEFAULT_COLOR_SPEC;
   IText labelText = DEFAULT_LABEL_TEXT;
   IText valueText = DEFAULT_VALUE_TEXT;
+  EOrientation labelOrientation = DEFAULT_LABEL_ORIENTATION;
   
   /** Create a new IVStyle to configure common styling for IVControls
    * @param showLabel Show the label
@@ -2517,7 +2527,8 @@ struct IVStyle
           float frameThickness = DEFAULT_FRAME_THICKNESS,
           float shadowOffset = DEFAULT_SHADOW_OFFSET,
           float widgetFrac = DEFAULT_WIDGET_FRAC,
-          float angle = DEFAULT_WIDGET_ANGLE)
+          float angle = DEFAULT_WIDGET_ANGLE,
+          EOrientation labelOrientation = DEFAULT_LABEL_ORIENTATION)
   : hideCursor(hideCursor)
   , showLabel(showLabel)
   , showValue(showValue)
@@ -2548,7 +2559,7 @@ struct IVStyle
   IVStyle WithValueText(const IText& text) const { IVStyle newStyle = *this; newStyle.valueText = text; return newStyle; }
   IVStyle WithHideCursor(bool hide = true) const { IVStyle newStyle = *this; newStyle.hideCursor = hide; return newStyle; }
   IVStyle WithColor(EVColor idx, IColor color) const { IVStyle newStyle = *this; newStyle.colorSpec.mColors[idx] = color; return newStyle; }
-  IVStyle WithColors(IVColorSpec spec) const { IVStyle newStyle = *this; newStyle.colorSpec = spec; return newStyle; }
+  IVStyle WithColors(const IVColorSpec& spec) const { IVStyle newStyle = *this; newStyle.colorSpec = spec; return newStyle; }
   IVStyle WithRoundness(float v) const { IVStyle newStyle = *this; newStyle.roundness = Clip(v, 0.f, 1.f); return newStyle; }
   IVStyle WithFrameThickness(float v) const { IVStyle newStyle = *this; newStyle.frameThickness = v; return newStyle; }
   IVStyle WithShadowOffset(float v) const { IVStyle newStyle = *this; newStyle.shadowOffset = v; return newStyle; }
@@ -2557,6 +2568,7 @@ struct IVStyle
   IVStyle WithWidgetFrac(float v) const { IVStyle newStyle = *this; newStyle.widgetFrac = Clip(v, 0.f, 1.f); return newStyle; }
   IVStyle WithAngle(float v) const { IVStyle newStyle = *this; newStyle.angle = Clip(v, 0.f, 360.f); return newStyle; }
   IVStyle WithEmboss(bool v = true) const { IVStyle newStyle = *this; newStyle.emboss = v; return newStyle; }
+  IVStyle WithLabelOrientation(EOrientation v) const { IVStyle newStyle = *this; newStyle.labelOrientation = v; return newStyle; }
 };
 
 const IVStyle DEFAULT_STYLE = IVStyle();

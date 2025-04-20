@@ -13,7 +13,7 @@ IPlugResponsiveUI::IPlugResponsiveUI(const InstanceInfo& info)
 #ifdef OS_WEB
     int w, h;
     GetScreenDimensions(w, h);
-    return MakeGraphics(*this, w, h, 1.f);
+    return MakeGraphics(*this, w, h, PLUG_FPS, 1.f);
 #else
     return MakeGraphics(*this, PLUG_WIDTH, PLUG_HEIGHT, PLUG_FPS);
 #endif
@@ -59,11 +59,6 @@ IPlugResponsiveUI::IPlugResponsiveUI(const InstanceInfo& info)
 }
 
 #if IPLUG_EDITOR
-void IPlugResponsiveUI::OnParentWindowResize(int width, int height)
-{
-  if (GetUI())
-    GetUI()->Resize(width, height, 1.f, false);
-}
 
 bool IPlugResponsiveUI::OnHostRequestingSupportedViewConfiguration(int width, int height)
 {

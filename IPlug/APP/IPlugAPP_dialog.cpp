@@ -14,6 +14,7 @@
 
 #ifdef OS_WIN
 #include "asio.h"
+extern float GetScaleForHWND(HWND hWnd);
 #define GET_MENU() GetMenu(gHWND)
 #elif defined OS_MAC
 #define GET_MENU() SWELL_GetCurrentMenu()
@@ -26,9 +27,6 @@ using namespace iplug;
 using namespace igraphics;
 #endif
 
-#if defined OS_MAC
-extern int GetTitleBarOffset();
-#endif
 
 // check the input and output devices, find matching srs
 void IPlugAPPHost::PopulateSampleRateList(HWND hwndDlg, RtAudio::DeviceInfo* inputDevInfo, RtAudio::DeviceInfo* outputDevInfo)
@@ -517,7 +515,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
   return TRUE;
 }
 
-static void ClientResize(HWND hWnd, int nWidth, int nHeight)
+static void ClientResize(HWND hWnd, int width, int height)
 {
   RECT rcClient, rcWindow;
   POINT ptDiff;
@@ -526,8 +524,8 @@ static void ClientResize(HWND hWnd, int nWidth, int nHeight)
   
   screenwidth  = GetSystemMetrics(SM_CXSCREEN);
   screenheight = GetSystemMetrics(SM_CYSCREEN);
-  x = (screenwidth / 2) - (nWidth / 2);
-  y = (screenheight / 2) - (nHeight / 2);
+  x = (screenwidth / 2) - (width / 2);
+  y = (screenheight / 2) - (height / 2);
   
   GetClientRect(hWnd, &rcClient);
   GetWindowRect(hWnd, &rcWindow);
@@ -535,20 +533,13 @@ static void ClientResize(HWND hWnd, int nWidth, int nHeight)
   ptDiff.x = (rcWindow.right - rcWindow.left) - rcClient.right;
   ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
   
-  SetWindowPos(hWnd, 0, x, y, nWidth + ptDiff.x, nHeight + ptDiff.y, 0);
+  SetWindowPos(hWnd, 0, x, y, width + ptDiff.x, height + ptDiff.y, 0);
 }
-
-#ifdef OS_WIN 
-extern float GetScaleForHWND(HWND hWnd);
-#endif
 
 //static
 WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
   IPlugAPPHost* pAppHost = IPlugAPPHost::sInstance.get();
-
-  int width = 0;
-  int height = 0;
 
   switch (uMsg)
   {
@@ -558,12 +549,11 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       IPlugAPP* pPlug = pAppHost->GetPlug();
 
       if (!pAppHost->OpenWindow(gHWND))
+      {
         DBGMSG("couldn't attach gui\n");
+      }
 
-      width = pPlug->GetEditorWidth();
-      height = pPlug->GetEditorHeight();
-
-      ClientResize(hwndDlg, width, height);
+      ClientResize(hwndDlg, pPlug->GetEditorWidth(), pPlug->GetEditorHeight());
 
       ShowWindow(hwndDlg, SW_SHOW);
       return 1;
@@ -778,11 +768,7 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       {
         RECT r;
         GetClientRect(hwndDlg, &r);
-        float scale = 1.f;
-        #ifdef OS_WIN 
-        scale = GetScaleForHWND(hwndDlg);
-        #endif
-        pPlug->OnParentWindowResize(static_cast<int>(r.right / scale), static_cast<int>(r.bottom / scale));
+        pPlug->OnParentWindowResize(static_cast<int>(r.right), static_cast<int>(r.bottom));
         return 1;
       }
       default:

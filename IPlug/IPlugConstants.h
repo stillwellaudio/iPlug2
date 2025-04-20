@@ -61,7 +61,6 @@ enum EVST3ParamIDs
 #endif
 };
 
-//TODO: these should be in a namespace, to avoid conflicts with third-party libraries
 static const double PI = 3.1415926535897932384626433832795;
 
 /** @brief Magic number for gain to dB conversion.
@@ -156,7 +155,7 @@ enum EParamSource
   kPresetRecall,
   kUI,
   kDelegate,
-  kRecompile, // for FAUST JIT
+  kRecompile, // for JIT
   kUnknown,
   kNumParamSources
 };
@@ -183,7 +182,8 @@ enum EAPI
   kAPIAAX = 4,
   kAPIAPP = 5,
   kAPIWAM = 6,
-  kAPIWEB = 7
+  kAPIWEB = 7,
+  kAPICLAP = 8
 };
 
 /** @enum EHost

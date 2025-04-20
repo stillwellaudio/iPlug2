@@ -41,31 +41,17 @@ BEGIN_IPLUG_NAMESPACE
   #if defined(OS_MAC) || defined(OS_LINUX) || defined(OS_WEB) || defined(OS_IOS)
     #define DBGMSG(...) printf(__VA_ARGS__)
   #elif defined OS_WIN
-    #ifdef OutputDebugString
-    #undef OutputDebugString
-    #define OutputDebugString OutputDebugStringA
-    #endif
-
     static void DBGMSG(const char* format, ...)
     {
-      char buf[4096], * p = buf;
+      char buf[4096];
       va_list args;
-      int     n;
+      int n;
 
       va_start(args, format);
-      n = _vsnprintf(p, sizeof buf - 3, format, args); // buf-3 is room for CR/LF/NUL
+      n = vsnprintf_s(buf, sizeof buf, sizeof buf - 1, format, args);
       va_end(args);
 
-      p += (n < 0) ? sizeof buf - 3 : n;
-
-      while (p > buf&& isspace(p[-1]))
-        *--p = '\0';
-
-      *p++ = '\r';
-      *p++ = '\n';
-      *p = '\0';
-
-      OutputDebugString(buf);
+      OutputDebugStringW(UTF8AsUTF16(buf).Get());
     }
   #endif
 #endif
@@ -91,6 +77,14 @@ BEGIN_IPLUG_NAMESPACE
   struct LogFile
   {
     FILE* mFP;
+    static LogFile* sInstance;
+    
+    static LogFile* GetInstance()
+    {
+      if (!sInstance)
+        sInstance = new LogFile();
+      return sInstance;
+    }
     
     LogFile()
     {
@@ -101,7 +95,7 @@ BEGIN_IPLUG_NAMESPACE
       char logFilePath[MAX_MACOS_PATH_LEN];
       snprintf(logFilePath, MAX_MACOS_PATH_LEN, "%s/%s", getenv("HOME"), LOGFILE);
   #endif
-      mFP = fopen(logFilePath, "w");
+      mFP = fopenUTF8(logFilePath, "w");
       assert(mFP);
       
       DBGMSG("Logging to %s\n", logFilePath);
@@ -109,13 +103,18 @@ BEGIN_IPLUG_NAMESPACE
     
     ~LogFile()
     {
-      fclose(mFP);
-      mFP = nullptr;
+      if (mFP)
+      {
+        fclose(mFP);
+        mFP = nullptr;
+      }
     }
     
     LogFile(const LogFile&) = delete;
     LogFile& operator=(const LogFile&) = delete;
   };
+
+  inline LogFile* LogFile::sInstance = nullptr;
 
   static bool IsWhitespace(char c)
   {
@@ -219,8 +218,8 @@ BEGIN_IPLUG_NAMESPACE
     if (sTrace++ < MAX_LOG_LINES)
     {
   #ifndef TRACETOSTDOUT
-      static LogFile sLogFile;
-      assert(sLogFile.mFP);
+      LogFile* sLogFile = LogFile::GetInstance();
+      assert(sLogFile->mFP);
   #endif
       static WDL_Mutex sLogMutex;
       char str[TXTLEN];
@@ -236,13 +235,13 @@ BEGIN_IPLUG_NAMESPACE
       {
         if(++sProcessCount > MAX_PROCESS_TRACE_COUNT)
         {
-          fflush(sLogFile.mFP);
+          fflush(sLogFile->mFP);
           return;
         }
         else if (sProcessCount == MAX_PROCESS_TRACE_COUNT)
         {
-          fprintf(sLogFile.mFP, "**************** DISABLING PROCESS TRACING AFTER %d HITS ****************\n\n", sProcessCount);
-          fflush(sLogFile.mFP);
+          fprintf(sLogFile->mFP, "**************** DISABLING PROCESS TRACING AFTER %d HITS ****************\n\n", sProcessCount);
+          fflush(sLogFile->mFP);
           return;
         }
       }
@@ -255,22 +254,22 @@ BEGIN_IPLUG_NAMESPACE
       {
         if(++sIdleCount > MAX_IDLE_TRACE_COUNT)
         {
-          fflush(sLogFile.mFP);
+          fflush(sLogFile->mFP);
           return;
         }
         else if (sIdleCount == MAX_IDLE_TRACE_COUNT)
         {
-          fprintf(sLogFile.mFP, "**************** DISABLING IDLE/MOUSEOVER TRACING AFTER %d HITS ****************\n", sIdleCount);
-          fflush(sLogFile.mFP);
+          fprintf(sLogFile->mFP, "**************** DISABLING IDLE/MOUSEOVER TRACING AFTER %d HITS ****************\n", sIdleCount);
+          fflush(sLogFile->mFP);
           return;
         }
       }
       
       if (threadID > 0)
-        fprintf(sLogFile.mFP, "*** -");
+        fprintf(sLogFile->mFP, "*** -");
       
-      fprintf(sLogFile.mFP, "[%ld:%s:%d]%s", threadID, funcName, line, str);
-      fflush(sLogFile.mFP);
+      fprintf(sLogFile->mFP, "[%ld:%s:%d]%s", threadID, funcName, line, str);
+      fflush(sLogFile->mFP);
   #endif
     }
   }
