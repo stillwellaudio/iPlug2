@@ -22,21 +22,18 @@ elif [ "$1" == "win" ]; then
 fi
 
 
-curl https://github.com/iPlug2/iPlug2/releases/download/v1.0.0-beta/$ZIP_FILE.zip -L -J -O
-if [ ! -d Build ]; then 
-  mkdir Build
+# Only download if prebuilt files aren't already present
+if [ ! -d Build/$FOLDER ] || [ ! -d Build/src ]; then
+  echo "🔽 Prebuilt dependencies not found — downloading $ZIP_FILE.zip..."
+  curl https://github.com/iPlug2/iPlug2/releases/download/v1.0.0-beta/$ZIP_FILE.zip -L -J -O
+
+  mkdir -p Build
+
+  unzip -o $ZIP_FILE.zip
+  mv $ZIP_FILE/* Build
+
+  rm -r $ZIP_FILE
+  rm -f $ZIP_FILE.zip
+else
+  echo "✅ Prebuilt dependencies found in cache — skipping download."
 fi
-
-if [ -d Build/$FOLDER ]; then 
-  rm -r Build/$FOLDER
-fi
-
-if [ -d Build/src ]; then 
-  rm -r Build/src
-fi
-
-unzip -o $ZIP_FILE.zip
-mv $ZIP_FILE/* Build
-
-rm -r $ZIP_FILE
-rm *.zip
