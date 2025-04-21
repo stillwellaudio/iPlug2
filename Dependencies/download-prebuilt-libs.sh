@@ -5,7 +5,7 @@ if [ "$1" == "" ]; then
   ZIP_FILE=IPLUG2_DEPS_MAC
   FOLDER=mac
   elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
-  exit
+  exit 1
   else
   ZIP_FILE=IPLUG2_DEPS_WIN
   FOLDER=win
