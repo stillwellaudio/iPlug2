@@ -44,7 +44,7 @@ $zipPath = "$zipFile.zip"
 
 # Only download if prebuilt files aren't already present
 if (-Not (Test-Path "Build/$folder") -or -Not (Test-Path "Build/src")) {
-    Write-Host "Prebuilt dependencies not found — downloading $zipPath..."
+    Write-Host "Prebuilt dependencies not found - downloading $zipPath..."
 
     Invoke-WebRequest -Uri "https://github.com/iPlug2/iPlug2/releases/download/v1.0.0-beta/$zipFile.zip" -OutFile $zipPath -UseBasicParsing
 
@@ -80,11 +80,11 @@ if (-Not (Test-Path "Build/$folder") -or -Not (Test-Path "Build/src")) {
 
     # Clean up extracted folder and zip archive
     Write-Host "Cleaning up..."
-    Remove-Item -Recurse -Force -Path $zipFile          # remove extracted folder like IPLUG2_DEPS_WIN
+    Remove-Item -Recurse -Force -Path $sourceDir          # remove extracted folder like IPLUG2_DEPS_WIN
     Remove-Item -Force -Path '*.zip'                    # remove zip archive itself
 
-    Write-Host 'Done.'
+    Write-Host "Done."
 }
 else {
-    Write-Host "Prebuilt dependencies found in cache — skipping download."
+    Write-Host "Prebuilt dependencies found in cache - skipping download."
 }
