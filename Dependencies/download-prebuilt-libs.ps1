@@ -44,7 +44,7 @@ $zipPath = "$zipFile.zip"
 
 # Only download if prebuilt files aren't already present
 if (-Not (Test-Path "Build/$folder") -or -Not (Test-Path "Build/src")) {
-    Write-Host "[INFO] Prebuilt dependencies not found - downloading $zipPath..."
+    Write-Host "Prebuilt dependencies not found — downloading $zipPath..."
 
     Invoke-WebRequest -Uri "https://github.com/iPlug2/iPlug2/releases/download/v1.0.0-beta/$zipFile.zip" -OutFile $zipPath -UseBasicParsing
 
@@ -70,11 +70,11 @@ if (-Not (Test-Path "Build/$folder") -or -Not (Test-Path "Build/src")) {
 
         # Remove the destination item if it already exists to prevent Move-Item errors
         if (Test-Path -LiteralPath $targetPath) {
-            Write-Host "[WARN]  Removing existing item at destination: '$targetPath'"
+            Write-Host "Removing existing item at destination: '$targetPath'"
             Remove-Item -LiteralPath $targetPath -Recurse -Force -ErrorAction Stop
         }
 
-        Write-Host "[INFO]  Moving '$sourcePath' -> '$targetPath'"
+        Write-Host "Moving '$sourcePath' → '$targetPath'"
         Move-Item -LiteralPath $sourcePath -Destination $targetPath -Force -ErrorAction Stop
     }
 
@@ -83,8 +83,8 @@ if (-Not (Test-Path "Build/$folder") -or -Not (Test-Path "Build/src")) {
     Remove-Item -Recurse -Force -Path $zipFile          # remove extracted folder like IPLUG2_DEPS_WIN
     Remove-Item -Force -Path '*.zip'                    # remove zip archive itself
 
-    Write-Host '[OK] Done.'
+    Write-Host 'Done.'
 }
 else {
-    Write-Host "[OK] Prebuilt dependencies found in cache - skipping download."
+    Write-Host "Prebuilt dependencies found in cache — skipping download."
 }
