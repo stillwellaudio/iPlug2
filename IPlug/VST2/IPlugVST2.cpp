@@ -734,6 +734,10 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
             return 1;
           }
         }
+        if (!strcmp((char*) ptr, "bypass"))
+        {
+          return 1;
+        }
         // Support Reaper VST extensions: http://www.reaper.fm/sdk/vst/
         if (!strcmp((char*) ptr, "hasCockosExtensions"))
         {
@@ -1002,6 +1006,21 @@ void VSTCALLBACK IPlugVST2::VSTProcessReplacing(AEffect* pEffect, float** inputs
   TRACE
   IPlugVST2* _this = (IPlugVST2*) pEffect->object;
   _this->VSTPreProcess(inputs, outputs, nFrames);
+
+  if (_this->GetBypassed())
+  {
+    int nChans = _this->MaxNChannels(ERoute::kOutput);
+    for (int ch = 0; ch < nChans; ++ch)
+    {
+      if (inputs && outputs)
+        memcpy(outputs[ch], inputs[ch], nFrames * sizeof(float));
+      else if (outputs)
+        memset(outputs[ch], 0, nFrames * sizeof(float));
+    }
+    _this->OutputSysexFromEditor();
+    return;
+  }
+
   ENTER_PARAMS_MUTEX_STATIC
   _this->ProcessBuffers((float) 0.0f, nFrames);
   LEAVE_PARAMS_MUTEX_STATIC
@@ -1013,6 +1032,21 @@ void VSTCALLBACK IPlugVST2::VSTProcessDoubleReplacing(AEffect* pEffect, double**
   TRACE
   IPlugVST2* _this = (IPlugVST2*) pEffect->object;
   _this->VSTPreProcess(inputs, outputs, nFrames);
+
+  if (_this->GetBypassed())
+  {
+    int nChans = _this->MaxNChannels(ERoute::kOutput);
+    for (int ch = 0; ch < nChans; ++ch)
+    {
+      if (inputs && outputs)
+        memcpy(outputs[ch], inputs[ch], nFrames * sizeof(double));
+      else if (outputs)
+        memset(outputs[ch], 0, nFrames * sizeof(double));
+    }
+    _this->OutputSysexFromEditor();
+    return;
+  }
+
   ENTER_PARAMS_MUTEX_STATIC
   _this->ProcessBuffers((double) 0.0, nFrames);
   LEAVE_PARAMS_MUTEX_STATIC
