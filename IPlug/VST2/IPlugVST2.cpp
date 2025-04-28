@@ -919,13 +919,18 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
 
       return handled ? 1 : 0;
     }
+    case effSetBypass:
+    {
+      // VST2 spec: value is 0 (off) or 1 (on)
+      _this->SetBypassed(value != 0);
+      return 1; // Indicate success
+    }
     case effEndSetProgram:
     case effBeginSetProgram:
     case effGetMidiProgramName:
     case effHasMidiProgramsChanged:
     case effGetMidiProgramCategory:
     case effGetCurrentMidiProgram:
-    case effSetBypass:
     default:
     {
       return 0;

@@ -261,6 +261,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   // Get bypass parameter value
   bool bypass;
   mBypassParameter->GetValueAsBool(&bypass);
+  SetBypassed(bypass);
   
   AAX_EStemFormat inFormat, outFormat;
   Controller()->GetInputStemFormat(&inFormat);
