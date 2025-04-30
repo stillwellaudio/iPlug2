@@ -21,6 +21,15 @@
 #include "AAX_CUnitDisplayDelegateDecorator.h"
 
 #include "config.h"
+#include "IPlugTimer.h"
+
+// *** ADDED platform specifics ***
+#ifdef _WIN32
+  #include <windows.h>
+#else // Assume POSIX
+  #include <pthread.h>
+#endif
+// *** END ADDED platform specifics ***
 
 using namespace iplug;
 
@@ -102,8 +111,16 @@ AAX_Result AAX_CEffectGUI_IPLUG::SetControlHighlightInfo(AAX_CParamID paramID, A
 IPlugAAX::IPlugAAX(const InstanceInfo& info, const Config& config)
 : IPlugAPIBase(config, kAPIAAX)
 , IPlugProcessor(config, kAPIAAX)
+, mChunkPending(false)
+, mPendingChunkID(0)
 {
   Trace(TRACELOC, "%s%s", config.pluginName, config.channelIOStr);
+
+#ifdef _WIN32
+  mMainThreadId = GetCurrentThreadId();
+#else // Assume POSIX
+  mMainThreadId = pthread_self();
+#endif
 
   SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), true);
   SetChannelConnections(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), true);
@@ -509,26 +526,48 @@ AAX_Result IPlugAAX::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* pChunk) con
 AAX_Result IPlugAAX::SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* pChunk)
 {
   TRACE
-  // TODO: UI thread only?
-  
-  if (chunkID == GetUniqueID())
-  {    
-    IByteChunk chunk;
-    chunk.PutBytes(pChunk->fData, pChunk->fSize);
-    int pos = 0;
-    //IByteChunk::GetIPlugVerFromChunk(chunk, pos); // TODO: IPlugVer should be in chunk!
-    pos = UnserializeState(chunk, pos);
-    
-    for (int i = 0; i< NParams(); i++)
-      SetParameterNormalizedValue(mParamIDs.Get(i)->Get(), GetParam(i)->GetNormalized());
-    
-    OnRestoreState();
-    mNumPlugInChanges++; // necessary in order to cause CompareActiveChunk() to get called again and turn off the compare light 
-    
-    return AAX_SUCCESS;
+
+  if (chunkID != GetUniqueID())
+  {
+    // If the chunk ID is wrong, we can report the error immediately regardless of thread
+    return AAX_ERROR_INVALID_CHUNK_ID;
   }
-  
-  return AAX_ERROR_INVALID_CHUNK_ID;
+
+  if (IsMainThread())
+  {
+    // TRACE_MAIN_THREAD // Optional trace macro
+
+    // On main thread, process immediately but use the helper for consistency
+    // Need to lock here too, in case OnTimer runs concurrently somehow? Unlikely but safest.
+    std::lock_guard<std::mutex> lock(mPendingChunkMutex);
+
+    // Copy data to pending buffer to pass to helper
+    mPendingChunkData.assign(pChunk->fData, pChunk->fData + pChunk->fSize);
+    mPendingChunkID = chunkID; // Store the ID
+
+    ProcessPendingChunk(); // Process it now
+
+    // Clear the flag in case it was somehow set ( belt-and-suspenders )
+    mChunkPending.store(false);
+  }
+  else
+  {
+    // TRACE_BACKGROUND_THREAD // Optional trace macro
+
+    // On background thread, defer processing
+    std::lock_guard<std::mutex> lock(mPendingChunkMutex);
+
+    // Copy chunk data and ID for later processing
+    mPendingChunkData.assign(pChunk->fData, pChunk->fData + pChunk->fSize);
+    mPendingChunkID = chunkID;
+
+    // Signal that a chunk is pending
+    mChunkPending.store(true);
+  }
+
+  // Always return success here if the ID was initially okay.
+  // The actual success/failure of processing happens later if deferred.
+  return AAX_SUCCESS;
 }
 
 AAX_Result IPlugAAX::CompareActiveChunk(const AAX_SPlugInChunk* pChunk, AAX_CBoolean* pIsEqual) const
@@ -671,3 +710,82 @@ double IPlugAAX::GetOutputBufferMaxValue (AAX_SIPlugRenderInfo* pRenderInfo, int
     }
     return mMax;
 };
+
+bool IPlugAAX::IsMainThread() const
+{
+#ifdef _WIN32
+  return GetCurrentThreadId() == mMainThreadId;
+#else // Assume POSIX
+  return pthread_equal(pthread_self(), mMainThreadId);
+#endif
+}
+
+void IPlugAAX::ProcessPendingChunk()
+{
+  // Assumes mPendingChunkMutex is held by the caller (OnTimer or main thread SetChunk)
+  TRACE
+
+  if (mPendingChunkID == GetUniqueID())
+  {
+    IByteChunk chunk;
+    // Create chunk from stored data
+    chunk.PutBytes(mPendingChunkData.data(), static_cast<int>(mPendingChunkData.size()));
+
+    int pos = 0;
+    // IByteChunk::GetIPlugVerFromChunk(chunk, pos); // TODO: IPlugVer should be in chunk!
+    pos = UnserializeState(chunk, pos);
+
+    if (pos >= 0) // Check for successful unserialization
+    {
+      // Restore parameter values after successful state load
+      for (int i = 0; i < NParams(); i++)
+      {
+        // Use the normalized value stored in the IParam object after UnserializeState
+        double normalizedValue = GetParam(i)->GetNormalized();
+        SetParameterNormalizedValue(mParamIDs.Get(i)->Get(), normalizedValue);
+        // Maybe call SendParameterValueFromAPI here too? Depends on desired host update behavior.
+      }
+
+      OnRestoreState(); // Let the plugin react to the loaded state
+      mNumPlugInChanges++; // Necessary to update compare light etc.
+    }
+    else
+    {
+       // Handle error: Unserialization failed
+       // You might want to log an error here
+    }
+  }
+  else
+  {
+      // Handle error: Invalid chunk ID encountered during deferred processing
+      // Log error? This shouldn't happen if SetChunk checks it.
+  }
+
+  // Clear the pending data now that it's processed
+  mPendingChunkData.clear();
+  mPendingChunkID = 0;
+}
+
+void IPlugAAX::OnTimer(Timer& t)
+{
+  // First check flag without locking for efficiency
+  if (!mChunkPending.load())
+  {
+    IPlugAPIBase::OnTimer(t); // *** Pass argument t *** Call base class OnTimer if nothing to do
+    return; // Nothing to do
+  }
+
+  // If flag is set, acquire lock and process
+  std::lock_guard<std::mutex> lock(mPendingChunkMutex);
+
+  // Re-check flag after acquiring lock, in case it was processed and cleared
+  // by a direct main-thread SetChunk call between the first check and acquiring the lock.
+  if (mChunkPending.load())
+  {
+    ProcessPendingChunk(); // Process the stored chunk data
+    mChunkPending.store(false); // Clear the flag
+  }
+  // else: another thread (main SetChunk path) must have processed it just now.
+  
+  IPlugAPIBase::OnTimer(t); // *** Pass argument t *** Call base class OnTimer after potentially processing chunk
+}

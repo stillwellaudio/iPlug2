@@ -28,6 +28,12 @@
 
 #include "AAX_Push8ByteStructAlignment.h"
 
+// *** ADDED includes ***
+#include <mutex>
+#include <vector>
+#include <atomic>
+#include <thread> // For std::this_thread::get_id, though platform specifics might be needed
+
 #if defined OS_WIN
   #if defined _DEBUG
     #if defined ARCH_64BIT
@@ -91,6 +97,8 @@ public:
   
   bool EditorResize(int viewWidth, int viewHeight) override;
   
+  void OnTimer(Timer& t);
+  
   /** Get the name of the track that the plug-in is inserted on */
   virtual void GetTrackName(WDL_String& str) override { str = mTrackName; };
   
@@ -134,12 +142,26 @@ private:
   IMidiQueue mMidiOutputQueue;
   int mMaxNChansForMainInputBus = 0;
   WDL_String mTrackName;
+
+  // *** ADDED for thread-safe SetChunk ***
+  std::mutex mPendingChunkMutex;
+  std::vector<char> mPendingChunkData;
+  AAX_CTypeID mPendingChunkID = 0;
+  std::atomic<bool> mChunkPending {false};
+#ifdef _WIN32
+  DWORD mMainThreadId = 0;
+#else // Assume POSIX
+  pthread_t mMainThreadId = 0;
+#endif
+  bool IsMainThread() const;
+  void ProcessPendingChunk(); // Helper for the actual deserialization
+  // *** END ADDED for thread-safe SetChunk ***
 };
 
 IPlugAAX* MakePlug(const InstanceInfo& info);
 
 #include "AAX_PopStructAlignment.h"
 
-END_IGRAPHICS_NAMESPACE
+END_IPLUG_NAMESPACE
 
 #endif
