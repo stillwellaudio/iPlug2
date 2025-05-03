@@ -1000,6 +1000,7 @@ void IGraphicsWin::DestroyGLContext()
   wglMakeCurrent(NULL, NULL);
   wglDeleteContext(mHGLRC);
 }
+#endif
 
 void IGraphicsWin::ActivateGLContext()
 {
@@ -1018,7 +1019,6 @@ void IGraphicsWin::DeactivateGLContext()
   wglMakeCurrent(mStartHDC, mStartHGLRC); // return current ctxt to start
 #endif
 }
-#endif
 
 EMsgBoxResult IGraphicsWin::ShowMessageBox(const char* str, const char* title, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler)
 {
