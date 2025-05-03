@@ -474,6 +474,7 @@ void IGraphicsSkia::OnViewDestroyed()
 
 void IGraphicsSkia::DrawResize()
 {
+  ScopedGLContext scopedGLContext{this};
   auto w = static_cast<int>(std::ceil(static_cast<float>(WindowWidth()) * GetScreenScale()));
   auto h = static_cast<int>(std::ceil(static_cast<float>(WindowHeight()) * GetScreenScale()));
   
@@ -1028,11 +1029,12 @@ void IGraphicsSkia::ApplyLayerDropShadow(ILayerPtr& layer, const IShadow& shadow
     auto makeFilter = [&shadow](float scale)
     {
       // The constant of 3.f matches the IGraphics scaling of blur
-      
+
       const auto dx = shadow.mXOffset * scale;
       const auto dy = shadow.mYOffset * scale;
       const auto r = shadow.mBlurSize * scale / 3.f;
-      const auto color = SkiaColor(shadow.mPattern.GetStop(0).mColor, nullptr);
+      const IBlend blend(EBlend::Default, shadow.mOpacity);
+      const auto color = SkiaColor(shadow.mPattern.GetStop(0).mColor, &blend);
       
       if (shadow.mDrawForeground)
         return SkImageFilters::DropShadow(dx, dy, r, r, color, nullptr);
