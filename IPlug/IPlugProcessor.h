@@ -69,6 +69,11 @@ public:
    * @param nFrames The block size for this block: number of samples per channel.*/
   virtual void ProcessBlock(sample** inputs, sample** outputs, int nFrames);
 
+  /** Override in your plug-in class to process inputs whilst in bypass (e.g. to fill delay buffers)
+   * @param inputs Two-dimensional array containing the non-interleaved input buffers of audio samples for all channels
+   * @param nFrames The block size for this block: number of samples per channel.*/
+  virtual void ProcessBypass(sample** inputs, int nFrames) {}
+  
   /** Override this method to handle incoming MIDI messages. The method is called prior to ProcessBlock().
    * You can use IMidiQueue in combination with this method in order to queue the message and process at the appropriate time in ProcessBlock()
    * THIS METHOD IS CALLED BY THE HIGH PRIORITY AUDIO THREAD - You should be careful not to do any unbounded, blocking operations such as file I/O which could cause audio dropouts
