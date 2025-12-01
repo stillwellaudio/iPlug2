@@ -142,10 +142,23 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   
   OnViewInitialized(mImpl->mGLContext); 
 
+  // 5. Start the display timer for event processing and redraw
+  int intervalMs = 1000 / FPS();
+  mTimer = std::unique_ptr<Timer>(Timer::Create(
+    [this](Timer& t) { OnDisplayTimer(); }, 
+    intervalMs
+  ));
+
   return (void*)mImpl->mWindow;
 }
 
 void IGraphicsLinux::CloseWindow() {
+  // Stop the display timer first
+  if (mTimer) {
+    mTimer->Stop();
+    mTimer.reset();
+  }
+  
   if (mImpl->mDisplay) {
     
     OnViewDestroyed(); 
@@ -279,4 +292,21 @@ void IGraphicsLinux::PromptForFile(const char* fileName, EFileAction action, con
 
 void IGraphicsLinux::PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc completionHandler) {
   // Stub
+}
+
+void IGraphicsLinux::OnDisplayTimer()
+{
+  // 1. Process pending X11 events (mouse, keyboard, expose, etc.)
+  PlatformProcessEvents();
+  
+  // 2. Check if any controls need redrawing
+  if (IsDirty()) {
+    // Trigger redraw
+    Draw(GetDrawRect());
+    
+    // Swap GL buffers
+    if (mImpl->mDisplay && mImpl->mWindow) {
+      glXSwapBuffers(mImpl->mDisplay, mImpl->mWindow);
+    }
+  }
 }

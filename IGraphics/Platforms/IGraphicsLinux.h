@@ -11,6 +11,8 @@
 #pragma once
 
 #include "IGraphics_select.h"
+#include "IPlugTimer.h"
+#include <memory>
 
 // X11 Headers
 // Kept here because X11 types (Window, Display, Atom) are used in the class/impl API
@@ -75,6 +77,9 @@ protected:
 private:
   class Impl;
   Impl* mImpl = nullptr;
+  std::unique_ptr<Timer> mTimer;
+  
+  void OnDisplayTimer();
 };
 
 END_IGRAPHICS_NAMESPACE
