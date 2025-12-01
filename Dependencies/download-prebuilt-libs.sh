@@ -5,6 +5,18 @@ if [ "$1" == "" ]; then
   ZIP_FILE=IPLUG2_DEPS_MAC
   FOLDER=mac
   elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+  FOLDER=linux
+  # Linux doesn't have prebuilt dependencies - they must be built from source
+  echo "⚠️  Linux detected - prebuilt dependencies are not available."
+  echo ""
+  echo "You need to build Skia from source. Run the following script:"
+  echo "  cd $(dirname $0)/IGraphics && ./build-skia-linux.sh"
+  echo ""
+  echo "Required system packages (Ubuntu/Debian):"
+  echo "  sudo apt-get install build-essential ninja-build python3 git"
+  echo "  sudo apt-get install libfontconfig1-dev libfreetype6-dev"
+  echo "  sudo apt-get install libx11-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev"
+  echo ""
   exit 1
   else
   ZIP_FILE=IPLUG2_DEPS_WIN
@@ -19,6 +31,11 @@ elif [ "$1" == "ios" ]; then
 elif [ "$1" == "win" ]; then
   ZIP_FILE=IPLUG2_DEPS_WIN
   FOLDER=win
+elif [ "$1" == "linux" ]; then
+  FOLDER=linux
+  echo "⚠️  Linux - prebuilt dependencies are not available."
+  echo "Run: cd $(dirname $0)/IGraphics && ./build-skia-linux.sh"
+  exit 1
 fi
 
 
