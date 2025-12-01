@@ -232,6 +232,222 @@ const void* LoadWinResource(const char* resid, const char* type, int& sizeInByte
   }
 }
 
+#elif defined OS_LINUX
+#pragma mark - OS_LINUX
+
+#include <dlfcn.h>
+#include <unistd.h>
+#include <limits.h>
+#include <cstring>
+
+static void GetModulePath(void* handle, WDL_String& path)
+{
+  path.Set("");
+  
+  if (handle)
+  {
+    Dl_info info;
+    if (dladdr(handle, &info) && info.dli_fname)
+    {
+      char resolved[PATH_MAX];
+      if (realpath(info.dli_fname, resolved))
+      {
+        // Get directory containing the .so file
+        char* lastSlash = strrchr(resolved, '/');
+        if (lastSlash)
+        {
+          *lastSlash = '\0';
+          path.Set(resolved);
+          path.Append("/");
+        }
+      }
+    }
+  }
+}
+
+void HostPath(WDL_String& path, const char* bundleID)
+{
+  // Get path to host executable
+  GetModulePath(nullptr, path);
+}
+
+void PluginPath(WDL_String& path, void* pExtra)
+{
+  GetModulePath(pExtra, path);
+}
+
+void BundleResourcePath(WDL_String& path, void* pExtra)
+{
+#ifdef VST3_API
+  // Use dladdr with a function pointer from this module to get the module path
+  // This is more reliable than using pExtra which might be null or incorrect
+  Dl_info info;
+  // Use BundleResourcePath itself as the symbol to locate
+  if (dladdr((void*)BundleResourcePath, &info) && info.dli_fname)
+  {
+    char resolved[PATH_MAX];
+    if (realpath(info.dli_fname, resolved))
+    {
+      // Get directory containing the .so file
+      // Path is: .../eventhorizon.vst3/Contents/x86_64-linux/eventhorizon.so
+      // We want: .../eventhorizon.vst3/Contents/Resources/
+      char* lastSlash = strrchr(resolved, '/');
+      if (lastSlash)
+      {
+        *lastSlash = '\0'; // Remove filename
+        // Remove architecture directory (e.g., "x86_64-linux")
+        lastSlash = strrchr(resolved, '/');
+        if (lastSlash)
+        {
+          *lastSlash = '\0'; // Remove architecture directory
+          path.Set(resolved);
+          path.Append("/Resources/");
+          return;
+        }
+      }
+    }
+  }
+  // Fallback to old method if dladdr fails
+  GetModulePath(pExtra, path);
+  // Remove architecture-specific directory (e.g., "x86_64-linux/")
+  // Path is: .../eventhorizon.vst3/Contents/x86_64-linux/eventhorizon.so
+  // We want: .../eventhorizon.vst3/Contents/Resources/
+  int len = path.GetLength();
+  if (len > 0 && path.Get()[len-1] == '/')
+    path.SetLen(len - 1); // Remove trailing slash
+  
+  // Remove filename if present
+  const char* p = path.Get();
+  const char* lastSlash = strrchr(p, '/');
+  if (lastSlash)
+  {
+    path.Set(p, lastSlash - p);
+    // Remove architecture directory (e.g., "x86_64-linux")
+    lastSlash = strrchr(path.Get(), '/');
+    if (lastSlash)
+    {
+      path.Set(p, lastSlash - p);
+      path.Append("/Resources/");
+    }
+  }
+#endif
+}
+
+void DesktopPath(WDL_String& path)
+{
+  const char* home = getenv("HOME");
+  if (home)
+  {
+    path.Set(home);
+    path.Append("/Desktop");
+  }
+  else
+  {
+    path.Set("");
+  }
+}
+
+void UserHomePath(WDL_String& path)
+{
+  const char* home = getenv("HOME");
+  if (home)
+    path.Set(home);
+  else
+    path.Set("");
+}
+
+void AppSupportPath(WDL_String& path, bool isSystem)
+{
+  const char* home = getenv("HOME");
+  if (home)
+  {
+    path.Set(home);
+    if (isSystem)
+      path.Append("/.local/share");
+    else
+      path.Append("/.local/share");
+  }
+  else
+  {
+    path.Set("");
+  }
+}
+
+void VST3PresetsPath(WDL_String& path, const char* mfrName, const char* pluginName, bool isSystem)
+{
+  const char* home = getenv("HOME");
+  if (home)
+  {
+    path.Set(home);
+    path.AppendFormatted(1024, "/.vst3/presets/%s/%s", mfrName, pluginName);
+  }
+  else
+  {
+    path.Set("");
+  }
+}
+
+void INIPath(WDL_String& path, const char* pluginName)
+{
+  const char* home = getenv("HOME");
+  if (home)
+  {
+    path.Set(home);
+    path.AppendFormatted(1024, "/.config/%s", pluginName);
+  }
+  else
+  {
+    path.Set("");
+  }
+}
+
+void WebViewCachePath(WDL_String& path)
+{
+  const char* home = getenv("HOME");
+  if (home)
+  {
+    path.Set(home);
+    path.Append("/.cache/iPlug2/WebViewCache");
+  }
+  else
+  {
+    path.Set("");
+  }
+}
+
+EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char* bundleID, void* pHInstance, const char* sharedResourcesSubPath)
+{
+  if (!CStringHasContents(name))
+    return EResourceLocation::kNotFound;
+  
+  // Try bundle resources first (for VST3)
+#ifdef VST3_API
+  WDL_String bundlePath;
+  BundleResourcePath(bundlePath, pHInstance);
+  if (bundlePath.GetLength() > 0)
+  {
+    WDL_String fullPath(bundlePath);
+    fullPath.Append(name);
+    
+    // Check if file exists
+    if (access(fullPath.Get(), F_OK) == 0)
+    {
+      result.Set(fullPath.Get());
+      return EResourceLocation::kAbsolutePath;
+    }
+  }
+#endif
+  
+  // Try as absolute path
+  if (access(name, F_OK) == 0)
+  {
+    result.Set(name);
+    return EResourceLocation::kAbsolutePath;
+  }
+  
+  return EResourceLocation::kNotFound;
+}
+
 #elif defined OS_WEB
 #pragma mark - OS_WEB
 

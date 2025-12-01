@@ -8,45 +8,60 @@
  ==============================================================================
 */
 
+// CRITICAL: Include GLAD FIRST before ANY OpenGL headers  
+// Use quotes to ensure we get the local GLAD, not a system one
+#include "glad/glad.h"
+
+// Now include IGraphicsLinux.h (which includes IGraphics_select.h which includes GLAD again, but guards prevent double-include)
 #include "IGraphicsLinux.h"
+
+// Include X11/GLX headers AFTER GLAD is definitely loaded
+// GLX includes GL, but GLAD has already defined __gl_h_, so GL should be skipped
+#include <X11/XKBlib.h>
+// Define GLX_GLXEXT_LEGACY before including glx.h to prevent some issues
+#define GLX_GLXEXT_LEGACY
+#include <GL/glx.h>
+#undef GLX_GLXEXT_LEGACY
+
+// Save X11's None before it gets undefined (though we undef it in the header)
+static constexpr long X11_None = 0L;
 #include "IControl.h"
 
-// Key mapping headers
-#include <X11/XKBlib.h>
-#include <GL/glx.h>
-
-// Skia Headers
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/gl/GrGLInterface.h"
+// Skia Headers - use new Skia m131 paths
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/gl/GrGLInterface.h"
+#include "include/gpu/ganesh/gl/GrGLDirectContext.h"  // Defines GrDirectContexts namespace
 
 using namespace iplug;
 using namespace iplug::igraphics;
 
 // --- Key Mapping Helper ---
-static int XKeyToVK(KeySym keysym) {
+static IKeyPress XKeyToKeyPress(KeySym keysym) {
+  int vk = 0;
   switch (keysym) {
-    case XK_Return: return kVK_RETURN;
-    case XK_Escape: return kVK_ESCAPE;
-    case XK_BackSpace: return kVK_BACK;
-    case XK_Tab: return kVK_TAB;
-    case XK_Left: return kVK_LEFT;
-    case XK_Right: return kVK_RIGHT;
-    case XK_Up: return kVK_UP;
-    case XK_Down: return kVK_DOWN;
-    case XK_Shift_L: case XK_Shift_R: return kVK_SHIFT;
-    case XK_Control_L: case XK_Control_R: return kVK_CONTROL;
+    case XK_Return: vk = kVK_RETURN; break;
+    case XK_Escape: vk = kVK_ESCAPE; break;
+    case XK_BackSpace: vk = kVK_BACK; break;
+    case XK_Tab: vk = kVK_TAB; break;
+    case XK_Left: vk = kVK_LEFT; break;
+    case XK_Right: vk = kVK_RIGHT; break;
+    case XK_Up: vk = kVK_UP; break;
+    case XK_Down: vk = kVK_DOWN; break;
+    case XK_Shift_L: case XK_Shift_R: vk = kVK_SHIFT; break;
+    case XK_Control_L: case XK_Control_R: vk = kVK_CONTROL; break;
     default:
-      if (keysym >= XK_a && keysym <= XK_z) return keysym - 32;
-      if (keysym >= XK_0 && keysym <= XK_9) return keysym;
-      return 0;
+      if (keysym >= XK_a && keysym <= XK_z) vk = keysym - 32;
+      else if (keysym >= XK_0 && keysym <= XK_9) vk = keysym;
+      break;
   }
+  return IKeyPress("", vk);
 }
 
 class IGraphicsLinux::Impl {
 public:
   Display* mDisplay = nullptr;
-  Window mWindow = 0;
-  Window mParentWindow = 0;
+  ::Window mWindow = 0;  // Use global namespace Window to avoid X11 conflicts
+  ::Window mParentWindow = 0;
   GLXContext mGLContext = nullptr;
   Atom mWmDeleteMessage;
   
@@ -70,9 +85,7 @@ bool IGraphicsLinux::WindowIsOpen() {
 }
 
 void IGraphicsLinux::PlatformResize(bool mouseOver) {
-    if (mImpl->mDisplay && mImpl->mWindow) {
-        // Todo: Check actual window size via XGetGeometry and call OnResize
-    }
+  // Todo: Check actual window size via XGetGeometry and call OnResize
 }
 
 void* IGraphicsLinux::OpenWindow(void* pParent) {
@@ -83,10 +96,10 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   }
 
   int screen = DefaultScreen(mImpl->mDisplay);
-  Window root = RootWindow(mImpl->mDisplay, screen);
+  ::Window root = RootWindow(mImpl->mDisplay, screen);
 
-  // 1. Setup GLX Visual
-  GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
+  // 1. Setup GLX Visual - use X11_None instead of None
+  GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, (GLint)X11_None };
   XVisualInfo* vi = glXChooseVisual(mImpl->mDisplay, 0, att);
 
   if (!vi) {
@@ -102,7 +115,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
                    ButtonPressMask | ButtonReleaseMask | 
                    PointerMotionMask | StructureNotifyMask;
 
-  mImpl->mParentWindow = (Window)pParent;
+  mImpl->mParentWindow = (::Window)pParent;
 
   if (mImpl->mParentWindow) {
     mImpl->mWindow = XCreateWindow(mImpl->mDisplay, mImpl->mParentWindow, 
@@ -131,9 +144,9 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   
   auto interface = GrGLMakeNativeInterface();
   if (!interface) {
-      DBGMSG("Failed to create Skia GL interface\n");
+    DBGMSG("Failed to create Skia GL interface\n");
   } else {
-      mImpl->mGrContext = GrDirectContext::MakeGL(interface);
+    mImpl->mGrContext = GrDirectContexts::MakeGL(interface);
   }
 
   // 4. Critical iPlug2 Initialization Hooks
@@ -142,7 +155,18 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   
   OnViewInitialized(mImpl->mGLContext); 
 
-  // 5. Start the display timer for event processing and redraw
+  // 5. Force initial redraw to clear the window
+  SetAllControlsDirty();
+  IRECTList rects;
+  if (IsDirty(rects)) {
+    // GL context is already active from ActivateGLContext() call above
+    Draw(rects);
+    if (mImpl->mDisplay && mImpl->mWindow) {
+      glXSwapBuffers(mImpl->mDisplay, mImpl->mWindow);
+    }
+  }
+
+  // 6. Start the display timer for event processing and redraw
   int intervalMs = 1000 / FPS();
   mTimer = std::unique_ptr<Timer>(Timer::Create(
     [this](Timer& t) { OnDisplayTimer(); }, 
@@ -165,7 +189,7 @@ void IGraphicsLinux::CloseWindow() {
 
     if (mImpl->mGLContext) {
       mImpl->mGrContext.reset();
-      glXMakeCurrent(mImpl->mDisplay, None, nullptr);
+      glXMakeCurrent(mImpl->mDisplay, X11_None, nullptr);
       glXDestroyContext(mImpl->mDisplay, mImpl->mGLContext);
       mImpl->mGLContext = nullptr;
     }
@@ -182,13 +206,22 @@ void IGraphicsLinux::CloseWindow() {
 
 void IGraphicsLinux::ActivateGLContext() {
   if(mImpl->mDisplay && mImpl->mWindow && mImpl->mGLContext) {
-    glXMakeCurrent(mImpl->mDisplay, mImpl->mWindow, mImpl->mGLContext); 
+    glXMakeCurrent(mImpl->mDisplay, mImpl->mWindow, mImpl->mGLContext);
+    // Initialize GLAD after context is current
+    static bool gladInitialized = false;
+    if (!gladInitialized) {
+      if (!gladLoadGL()) {
+        DBGMSG("Failed to initialize GLAD\n");
+      } else {
+        gladInitialized = true;
+      }
+    }
   }
 }
 
 void IGraphicsLinux::DeactivateGLContext() {
   if(mImpl->mDisplay) {
-    glXMakeCurrent(mImpl->mDisplay, None, nullptr);
+    glXMakeCurrent(mImpl->mDisplay, X11_None, nullptr);
   }
 }
 
@@ -201,41 +234,103 @@ bool IGraphicsLinux::PlatformProcessEvents() {
     
     if (event.xany.window != mImpl->mWindow) continue;
 
-    IMouseMod modifiers; 
-    if (event.xkey.state & ShiftMask) modifiers.S = true;
-    if (event.xkey.state & ControlMask) modifiers.C = true;
-    if (event.xkey.state & Mod1Mask) modifiers.A = true; 
-
-    // Update global state if iPlug2 has such a requirement, 
-    // otherwise pass to specific event handlers.
-    
     switch (event.type) {
       case Expose:
-        if (event.xexpose.count == 0) Draw(GetDrawRect()); 
+        if (event.xexpose.count == 0) {
+          SetAllControlsDirty();
+        }
         break;
         
-      case ButtonPress:
-        OnMouseDown({(float)event.xbutton.x, (float)event.xbutton.y}, modifiers);
-        break;
+      case ButtonPress: {
+        IMouseMod modifiers;
+        unsigned int state = event.xbutton.state;
+        if (state & ShiftMask) modifiers.S = true;
+        if (state & ControlMask) modifiers.C = true;
+        if (state & Mod1Mask) modifiers.A = true;
+        if (event.xbutton.button == Button1) modifiers.L = true;
+        if (event.xbutton.button == Button3) modifiers.R = true;
         
-      case ButtonRelease:
-        OnMouseUp({(float)event.xbutton.x, (float)event.xbutton.y}, modifiers);
+        std::vector<IMouseInfo> points;
+        IMouseInfo info;
+        info.x = (float)event.xbutton.x;
+        info.y = (float)event.xbutton.y;
+        info.ms = modifiers;
+        points.push_back(info);
+        OnMouseDown(points);
         break;
+      }
         
-      case MotionNotify:
-        OnMouseOver({(float)event.xmotion.x, (float)event.xmotion.y}, modifiers);
+      case ButtonRelease: {
+        IMouseMod modifiers;
+        unsigned int state = event.xbutton.state;
+        if (state & ShiftMask) modifiers.S = true;
+        if (state & ControlMask) modifiers.C = true;
+        if (state & Mod1Mask) modifiers.A = true;
+        // Set button based on which button was released
+        if (event.xbutton.button == Button1) modifiers.L = true;
+        if (event.xbutton.button == Button3) modifiers.R = true;
+        
+        std::vector<IMouseInfo> points;
+        IMouseInfo info;
+        info.x = (float)event.xbutton.x;
+        info.y = (float)event.xbutton.y;
+        info.ms = modifiers;
+        points.push_back(info);
+        OnMouseUp(points);
         break;
+      }
+        
+      case MotionNotify: {
+        IMouseMod modifiers;
+        unsigned int state = event.xmotion.state;
+        if (state & ShiftMask) modifiers.S = true;
+        if (state & ControlMask) modifiers.C = true;
+        if (state & Mod1Mask) modifiers.A = true;
+        if (state & Button1Mask) modifiers.L = true;
+        if (state & Button3Mask) modifiers.R = true;
+        
+        // Check if a button is pressed (dragging)
+        if (state & (Button1Mask | Button3Mask)) {
+          // Get previous mouse position for delta calculation
+          static float prevX = 0, prevY = 0;
+          float x = (float)event.xmotion.x;
+          float y = (float)event.xmotion.y;
+          
+          std::vector<IMouseInfo> points;
+          IMouseInfo info;
+          info.x = x;
+          info.y = y;
+          info.dX = x - prevX;
+          info.dY = y - prevY;
+          info.ms = modifiers;
+          points.push_back(info);
+          
+          if (!IsInPlatformTextEntry()) {
+            OnMouseDrag(points);
+          }
+          
+          prevX = x;
+          prevY = y;
+        } else {
+          // No button pressed, just mouse over
+          OnMouseOver((float)event.xmotion.x, (float)event.xmotion.y, modifiers);
+        }
+        break;
+      }
         
       case KeyPress: {
+        IMouseMod modifiers;
+        unsigned int state = event.xkey.state;
+        if (state & ShiftMask) modifiers.S = true;
+        if (state & ControlMask) modifiers.C = true;
+        if (state & Mod1Mask) modifiers.A = true;
+        
         KeySym keysym = XLookupKeysym(&event.xkey, 0);
-        int vk = XKeyToVK(keysym);
-        if (vk) {
-            // FIX: Get current mouse location for the key event
-            float mx, my;
-            GetMouseLocation(mx, my);
-            // NOTE: Depending on iPlug2 version, OnKeyDown signature is (x, y, vk)
-            // Modifiers are typically tracked globally or via a separate setter.
-            OnKeyDown(mx, my, vk); 
+        IKeyPress kp = XKeyToKeyPress(keysym);
+        if (kp.VK) {
+          float mx, my;
+          GetMouseLocation(mx, my);
+          OnKeyDown(mx, my, kp);
         }
         break;
       }
@@ -253,7 +348,7 @@ bool IGraphicsLinux::PlatformProcessEvents() {
 
 void IGraphicsLinux::GetMouseLocation(float& x, float& y) const {
   if (!mImpl->mDisplay) return;
-  Window root, child;
+  ::Window root, child;
   int rootX, rootY, winX, winY;
   unsigned int mask;
   if (XQueryPointer(mImpl->mDisplay, mImpl->mWindow, &root, &child, &rootX, &rootY, &winX, &winY, &mask)) {
@@ -267,9 +362,9 @@ void IGraphicsLinux::HideMouseCursor(bool hide, bool lock) {
 }
 
 void IGraphicsLinux::MoveMouseCursor(float x, float y) {
-   if (mImpl->mDisplay && mImpl->mWindow) {
-       XWarpPointer(mImpl->mDisplay, None, mImpl->mWindow, 0, 0, 0, 0, (int)x, (int)y);
-   }
+  if (mImpl->mDisplay && mImpl->mWindow) {
+    XWarpPointer(mImpl->mDisplay, X11_None, mImpl->mWindow, 0, 0, 0, 0, (int)x, (int)y);
+  }
 }
 
 ECursor IGraphicsLinux::SetMouseCursor(ECursor cursorType) {
@@ -279,19 +374,15 @@ ECursor IGraphicsLinux::SetMouseCursor(ECursor cursorType) {
 // Stubs for Required Pure Virtuals
 EMsgBoxResult IGraphicsLinux::ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler) {
   DBGMSG("MsgBox: %s - %s\n", caption, str);
-  // Using generic OK. Check if your version requires EMsgBoxResult::OK
-  if(completionHandler) completionHandler(kMsgBoxResultOK);
-  return kMsgBoxResultOK;
+  if(completionHandler) completionHandler(EMsgBoxResult::kOK);
+  return EMsgBoxResult::kOK;
 }
 
 void IGraphicsLinux::ForceEndUserEdit() {}
 
-void IGraphicsLinux::PromptForFile(const char* fileName, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) {
-  // Stub
-}
-
-void IGraphicsLinux::PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc completionHandler) {
-  // Stub
+void IGraphicsLinux::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) {
+  // Stub - would need GTK or another toolkit for file dialogs
+  if (completionHandler) completionHandler(fileName, path);
 }
 
 void IGraphicsLinux::OnDisplayTimer()
@@ -300,13 +391,106 @@ void IGraphicsLinux::OnDisplayTimer()
   PlatformProcessEvents();
   
   // 2. Check if any controls need redrawing
-  if (IsDirty()) {
-    // Trigger redraw
-    Draw(GetDrawRect());
+  IRECTList rects;
+  if (IsDirty(rects)) {
+    // Activate GL context before drawing
+    ActivateGLContext();
+    
+    // Trigger redraw (this calls BeginFrame/EndFrame internally)
+    Draw(rects);
     
     // Swap GL buffers
     if (mImpl->mDisplay && mImpl->mWindow) {
       glXSwapBuffers(mImpl->mDisplay, mImpl->mWindow);
     }
+    
+    // Deactivate GL context after drawing
+    DeactivateGLContext();
   }
+}
+
+// Simple PlatformFont implementation for Linux
+class LinuxFont : public PlatformFont
+{
+public:
+  LinuxFont(IFontDataPtr&& data) : PlatformFont(false), mData(std::move(data)) {}
+  
+  IFontDataPtr GetFontData() override
+  {
+    if (mData && mData->IsValid())
+    {
+      // Return a copy of the font data
+      return IFontDataPtr(new IFontData(mData->Get(), mData->GetSize(), mData->GetFaceIdx()));
+    }
+    return IFontDataPtr(new IFontData());
+  }
+  
+private:
+  IFontDataPtr mData;
+};
+
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char* fontID, const char* fileNameOrResID)
+{
+  WDL_String fullPath;
+  const EResourceLocation fontLocation = LocateResource(fileNameOrResID, "ttf", fullPath, GetBundleID(), nullptr, nullptr);
+  
+  if (fontLocation == EResourceLocation::kNotFound)
+    return nullptr;
+  
+  if (fontLocation == EResourceLocation::kAbsolutePath)
+  {
+    FILE* file = fopen(fullPath.Get(), "rb");
+    if (!file)
+      return nullptr;
+    
+    // Get file size
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    
+    if (size <= 0)
+    {
+      fclose(file);
+      return nullptr;
+    }
+    
+    // Read font data
+    std::unique_ptr<uint8_t[]> data(new uint8_t[size]);
+    size_t bytesRead = fread(data.get(), 1, size, file);
+    fclose(file);
+    
+    if (bytesRead != static_cast<size_t>(size))
+      return nullptr;
+    
+    // Create font data object
+    IFontDataPtr fontData(new IFontData(data.get(), size, 0));
+    
+    if (!fontData->IsValid())
+      return nullptr;
+    
+    return PlatformFontPtr(new LinuxFont(std::move(fontData)));
+  }
+  
+  return nullptr;
+}
+
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char* fontID, void* pData, int dataSize)
+{
+  if (!pData || dataSize <= 0)
+    return nullptr;
+  
+  // Create font data object
+  IFontDataPtr fontData(new IFontData(pData, dataSize, 0));
+  
+  if (!fontData->IsValid())
+    return nullptr;
+  
+  return PlatformFontPtr(new LinuxFont(std::move(fontData)));
+}
+
+PlatformFontPtr IGraphicsLinux::LoadPlatformFont(const char* fontID, const char* fontName, ETextStyle style)
+{
+  // For system fonts, we could use fontconfig to find them
+  // For now, return nullptr - system font loading can be added later if needed
+  return nullptr;
 }

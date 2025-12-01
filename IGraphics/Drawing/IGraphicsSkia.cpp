@@ -1,5 +1,6 @@
 #include <cmath>
 #include <map>
+#include <mutex>
 
 #include "IGraphicsSkia.h"
 
@@ -28,14 +29,19 @@
 #include "modules/skshaper/include/SkShaper.h"
 #include "modules/skunicode/include/SkUnicode_icu.h"
 #endif
+
+#if defined OS_LINUX
+#include "include/ports/SkFontMgr_fontconfig.h"
+#endif
+
 #pragma warning( pop )
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "include/gpu/GrBackendSurface.h"
+#include "include/gpu/ganesh/GrBackendSurface.h"
 
 #if defined OS_MAC || defined OS_IOS
   #include "include/utils/mac/SkCGUtils.h"
   #if defined IGRAPHICS_GL2
-    #error SKIA doesn't work correctly with IGRAPHICS_GL2
+    #error SKIA does not work correctly with IGRAPHICS_GL2
   #elif defined IGRAPHICS_GL3
     #include <OpenGL/gl3.h>
   #elif defined IGRAPHICS_METAL
@@ -66,8 +72,8 @@
 
 #endif
 
-#if defined IGRAPHICS_GL
-  #include "include/gpu/gl/GrGLInterface.h"
+#if defined IGRAPHICS_GL || defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
+  #include "include/gpu/ganesh/gl/GrGLInterface.h"
   #include "include/gpu/ganesh/gl/GrGLDirectContext.h"
   #include "include/gpu/ganesh/gl/GrGLBackendSurface.h"
 
@@ -76,6 +82,9 @@
   #elif defined OS_WIN
     #include "include/gpu/ganesh/gl/win/GrGLMakeWinInterface.h"
     #pragma comment(lib, "opengl32.lib")
+  #elif defined OS_LINUX
+    // Linux: GLAD provides OpenGL headers
+    #include <glad/glad.h>
   #endif
 
 #endif
@@ -306,6 +315,9 @@ static sk_sp<SkFontMgr> SFontMgrFactory()
   return SkFontMgr_New_CoreText(nullptr);
 #elif defined OS_WIN
   return SkFontMgr_New_DirectWrite();
+#elif defined OS_LINUX
+  // Linux: Use system fontconfig-based font manager
+  return SkFontMgr_New_FontConfig(nullptr);
 #else
   #error "Not supported"
 #endif
@@ -420,11 +432,13 @@ APIBitmap* IGraphicsSkia::LoadAPIBitmap(const char* name, const void* pData, int
 
 void IGraphicsSkia::OnViewInitialized(void* pContext)
 {
-#if defined IGRAPHICS_GL
+#if defined IGRAPHICS_GL || defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
 #if defined OS_MAC
   auto glInterface = GrGLInterfaces::MakeMac();
 #elif defined OS_WIN
   auto glInterface = GrGLInterfaces::MakeWin();
+#elif defined OS_LINUX
+  auto glInterface = GrGLMakeNativeInterface();
 #endif
   mGrContext = GrDirectContexts::MakeGL(glInterface);
 #elif defined IGRAPHICS_METAL
@@ -503,7 +517,7 @@ void IGraphicsSkia::DrawResize()
 
 void IGraphicsSkia::BeginFrame()
 {
-#if defined IGRAPHICS_GL
+#if defined IGRAPHICS_GL || defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
   if (mGrContext.get())
   {
     int width = WindowWidth() * GetScreenScale();
@@ -572,6 +586,10 @@ void IGraphicsSkia::EndFrame()
     StretchDIBits(hdc, 0, 0, w, h, 0, 0, w, h, bmpInfo->bmiColors, bmpInfo, DIB_RGB_COLORS, SRCCOPY);
     ReleaseDC(hWnd, hdc);
     EndPaint(hWnd, &ps);
+  #elif defined OS_LINUX
+    // Linux CPU rendering not implemented - use GPU rendering (IGRAPHICS_GL3) instead
+    // This code path should not be reached when using GPU rendering
+    // Stub implementation to allow compilation
   #else
     #error NOT IMPLEMENTED
   #endif

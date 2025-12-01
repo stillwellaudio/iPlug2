@@ -22,6 +22,13 @@
 #include <cstring>
 #include <cmath>
 #include <functional>
+
+// Linux timer implementation needs these - must be included before namespace
+#if defined __linux__
+#include <thread>
+#include <atomic>
+#endif
+
 #include "ptrlist.h"
 #include "mutex.h"
 
@@ -96,9 +103,6 @@ private:
   ITimerFunction mTimerFunc;
 };
 #elif defined __linux__
-#include <thread>
-#include <atomic>
-
 class Timer_impl : public Timer
 {
 public:
@@ -109,6 +113,7 @@ public:
 private:
   std::thread mThread;
   std::atomic<bool> mRunning{false};
+  std::atomic<bool> mStopped{false};
   ITimerFunction mTimerFunc;
   uint32_t mIntervalMs;
 };

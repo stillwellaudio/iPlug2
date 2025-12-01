@@ -250,15 +250,22 @@ void IPlugVST3::SetLatency(int latency)
 {
   // N.B. set the latency even if the handler is not yet set
   
+  // Set the latency value first so getLatencySamples() returns correct value immediately
   IPlugProcessor::SetLatency(latency);
+  
+  DBGMSG("IPlugVST3::SetLatency: latency=%d, GetLatency()=%d", latency, GetLatency());
 
   if (componentHandler)
   {
     FUnknownPtr<IComponentHandler> handler(componentHandler);
 
-    if (handler)
-    {
+      if (handler)
+      {
+      // Note: On Linux, restartComponent() may cause the plugin to be destroyed/recreated.
+      // The timer will be properly cleaned up by the destructor if the plugin is destroyed.
+      // If the plugin is not destroyed, the timer continues running normally.
+      // We don't stop/recreate the timer here to avoid deadlock issues with thread joining.
       handler->restartComponent(kLatencyChanged);
-    }
+      }
   }
 }

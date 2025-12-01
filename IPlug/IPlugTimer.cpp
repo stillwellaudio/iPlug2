@@ -145,6 +145,7 @@ void Timer_impl::TimerProc(void* userData)
 }
 #elif defined __linux__
 #include <chrono>
+#include <mutex>
 
 Timer* Timer::Create(ITimerFunction func, uint32_t intervalMs)
 {
@@ -156,6 +157,7 @@ Timer_impl::Timer_impl(ITimerFunction func, uint32_t intervalMs)
 , mIntervalMs(intervalMs)
 {
   mRunning = true;
+  mStopped = false;
   mThread = std::thread([this]() {
     while (mRunning) {
       std::this_thread::sleep_for(std::chrono::milliseconds(mIntervalMs));
@@ -171,8 +173,16 @@ Timer_impl::~Timer_impl()
 
 void Timer_impl::Stop()
 {
+  // Idempotent: if already stopped, do nothing
+  bool expected = false;
+  if (!mStopped.compare_exchange_strong(expected, true)) {
+    return; // Already stopped
+  }
+  
   mRunning = false;
-  if (mThread.joinable()) 
+  
+  if (mThread.joinable()) {
     mThread.join();
+  }
 }
 #endif

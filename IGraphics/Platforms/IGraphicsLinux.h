@@ -19,6 +19,11 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+// X11 defines macros that conflict with C++ enum identifiers
+// Only undef the ones that actually conflict - Bool and Status are needed by GLX
+#undef None
+#undef Complex
+
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 /** IGraphics platform class for linux
@@ -51,28 +56,33 @@ public:
   EMsgBoxResult ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler) override;
   void ForceEndUserEdit() override;
   void UpdateTooltips() override {}
-  bool RevealPathInExplorerOrFinder(const char* path, bool select) override { return false; }
-  void PromptForFile(const char* fileName, EFileAction action, const char* ext, IFileDialogCompletionHandlerFunc completionHandler) override;
-  void PromptForColor(IColor& color, const char* str, IColorPickerHandlerFunc completionHandler) override;
+  bool RevealPathInExplorerOrFinder(WDL_String& path, bool select = false) override { return false; }
+  void PromptForFile(WDL_String& fileName, WDL_String& path, EFileAction action = EFileAction::Open, const char* ext = "", IFileDialogCompletionHandlerFunc completionHandler = nullptr) override;
+  void PromptForDirectory(WDL_String& dir, IFileDialogCompletionHandlerFunc completionHandler = nullptr) override {}
+  bool PromptForColor(IColor& color, const char* str = "", IColorPickerHandlerFunc func = nullptr) override { return false; }
   bool OpenURL(const char* url, const char* msgWindowTitle, const char* confirmMsg, const char* errMsgOnFailure) override { return false; }
   
   // Clipboard (Stubs)
-  void GetTextFromClipboard(WDL_String& str) override {}
+  bool GetTextFromClipboard(WDL_String& str) override { return false; }
   bool SetTextInClipboard(const char* str) override { return false; }
   
   // Platform Controls (Stubs)
-  void* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT& bounds, bool& isAsync) override { return nullptr; }
-  void* CreatePlatformTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int lengthLimit, const char* str) override { return nullptr; }
+  IPopupMenu* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT bounds, bool& isAsync) override { return nullptr; }
+  void CreatePlatformTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int length, const char* str) override {}
 
-  bool GetUserOSVersion(WDL_String& str) override { str.Set("Linux (X11)"); return true; }
+  // Window
+  void* GetWindow() override { return nullptr; }
+  
+  // Font loading
+  PlatformFontPtr LoadPlatformFont(const char* fontID, const char* fileNameOrResID) override;
+  PlatformFontPtr LoadPlatformFont(const char* fontID, void* pData, int dataSize) override;
+  PlatformFontPtr LoadPlatformFont(const char* fontID, const char* fontName, ETextStyle style) override;
+  void CachePlatformFont(const char* fontID, const PlatformFontPtr& font) override {}
 
 protected:
   // OpenGL Context Management
   void ActivateGLContext() override;
   void DeactivateGLContext() override;
-  
-  // This override is required by base class, even if unused in stub
-  IPopupMenu* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT& bounds) override { return nullptr; }
 
 private:
   class Impl;

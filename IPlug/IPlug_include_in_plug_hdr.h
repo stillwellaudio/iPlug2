@@ -97,7 +97,9 @@ END_IPLUG_NAMESPACE
   #endif
   #define EXPORT __attribute__ ((visibility("default")))
 #elif defined OS_LINUX
-  //TODO:
+  #define EXPORT __attribute__ ((visibility("default")))
+  #define BUNDLE_ID ""
+  #define APP_GROUP_ID ""
 #elif defined OS_WEB
   #define BUNDLE_ID ""
   #define APP_GROUP_ID ""
@@ -149,15 +151,15 @@ END_IPLUG_NAMESPACE
 #endif
 
 #ifndef BUNDLE_NAME
-  #error BUNDLE_NAME not defined - this is the product name part of the plug-in's bundle ID (used on macOS and iOS)
+  #error BUNDLE_NAME not defined - this is the product name part of the plug-in bundle ID (used on macOS and iOS)
 #endif
 
 #ifndef BUNDLE_MFR
-  #error BUNDLE_MFR not defined - this is the manufacturer name part of the plug-in's bundle ID (used on macOS and iOS)
+  #error BUNDLE_MFR not defined - this is the manufacturer name part of the plug-in bundle ID (used on macOS and iOS)
 #endif
 
 #ifndef BUNDLE_DOMAIN
-  #error BUNDLE_DOMAIN not defined - this is the domain name part of the plug-in's bundle ID (used on macOS and iOS)
+  #error BUNDLE_DOMAIN not defined - this is the domain name part of the plug-in bundle ID (used on macOS and iOS)
 #endif
 
 #ifndef PLUG_CHANNEL_IO
@@ -272,10 +274,10 @@ END_IPLUG_NAMESPACE
   #endif
   #if PLUG_HAS_UI
     #ifndef AUV2_VIEW_CLASS
-      #error AUV2_VIEW_CLASS not defined - the name of the Objective-C class for the AUv2 plug-in's view, without quotes
+      #error AUV2_VIEW_CLASS not defined - the name of the Objective-C class for the AUv2 plug-in view, without quotes
     #endif
     #ifndef AUV2_VIEW_CLASS_STR
-      #error AUV2_VIEW_CLASS_STR not defined - the name of the Objective-C class for the AUv2 plug-in's view,  with quotes
+      #error AUV2_VIEW_CLASS_STR not defined - the name of the Objective-C class for the AUv2 plug-in view, with quotes
     #endif
   #endif
 #endif

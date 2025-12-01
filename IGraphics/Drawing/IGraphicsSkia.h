@@ -18,7 +18,7 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #pragma warning( pop )
 
 namespace skia::textlayout {

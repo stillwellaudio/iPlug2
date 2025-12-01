@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cmath>
+
 #include "pluginterfaces/base/ustring.h"
 #include "public.sdk/source/vst/vstparameters.h"
 #include "base/source/fstring.h"
@@ -87,7 +89,7 @@ public:
   
   Steinberg::Vst::ParamValue toPlain(Steinberg::Vst::ParamValue valueNormalized) const override
   {
-    return std::round(valueNormalized * info.stepCount);
+    return ::std::round(valueNormalized * info.stepCount);
   }
   
   Steinberg::Vst::ParamValue toNormalized(Steinberg::Vst::ParamValue plainValue) const override

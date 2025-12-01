@@ -75,8 +75,12 @@
   #define FONT_DESCRIPTOR_TYPE HFONT
 #elif defined OS_WEB
   #define FONT_DESCRIPTOR_TYPE std::pair<WDL_String, WDL_String>*
+#elif defined OS_LINUX
+  // Linux uses fontconfig - use void* as opaque handle
+  #define FONT_DESCRIPTOR_TYPE void*
 #else 
   // NO_IGRAPHICS
+  #define FONT_DESCRIPTOR_TYPE void*
 #endif
 
 BEGIN_IPLUG_NAMESPACE

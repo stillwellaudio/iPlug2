@@ -220,7 +220,11 @@ public:
         }
       }
       
-      denormal_fix(&mPreviousOutput);
+      // Fix denormals - inline the logic to avoid template-dependent lookup issues with GCC 14
+      // This is the same logic as denormal_fix_float() but inlined to avoid static function lookup issues
+      unsigned int v;
+      memcpy(&v, &mPreviousOutput, sizeof(v));
+      if (!(v & 0x7f800000)) mPreviousOutput = 0.0f;
       return mPreviousOutput;
     }
 

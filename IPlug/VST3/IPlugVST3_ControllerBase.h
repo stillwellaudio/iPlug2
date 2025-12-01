@@ -10,6 +10,9 @@
 
 #pragma once
 
+#include <vector>
+#include <cmath>
+
 #include "pluginterfaces/base/ibstream.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "pluginterfaces/vst/ivstchannelcontextinfo.h"
@@ -208,7 +211,7 @@ public:
       {
         case kPresetParam:
         {
-          pPlug->RestorePreset(std::round((pPlug->NPresets() - 1) * value));
+          pPlug->RestorePreset(::std::round((pPlug->NPresets() - 1) * value));
           break;
         }
         default:
@@ -245,7 +248,7 @@ public:
         // Note: length is multiplied by two because Ableton Live 10.1.13 is buggy
         // and pList->getString() size parameter is interpreted as TChar instead
         // of byte: end of string zero value is written in an out of memory position
-        std::vector<TChar> name((length+1)*2);
+        ::std::vector<TChar> name((length+1)*2);
         if (pList->getString(ChannelContext::kChannelNameKey, name.data(),  static_cast<Steinberg::uint32>(length+1)*sizeof(TChar)) == kResultTrue)
         {
           Steinberg::String str(name.data());
@@ -261,7 +264,7 @@ public:
         // Note: length is multiplied by two because Ableton Live 10.1.13 is buggy
         // and pList->getString() size parameter is interpreted as TChar instead
         // of byte: end of string zero value is written in an out of memory position
-        std::vector<TChar> name((length+1)*2);
+        ::std::vector<TChar> name((length+1)*2);
         if (pList->getString(ChannelContext::kChannelUIDKey, name.data(), static_cast<Steinberg::uint32>(length+1)*sizeof(TChar)) == kResultTrue)
         {
           Steinberg::String str(name.data());
@@ -297,7 +300,7 @@ public:
         // Note: length is multiplied by two because Ableton Live 10.1.13 is buggy
         // and pList->getString() size parameter is interpreted as TChar instead
         // of byte: end of string zero value is written in an out of memory position
-        std::vector<TChar> name((length+1)*2);
+        ::std::vector<TChar> name((length+1)*2);
         if (pList->getString(ChannelContext::kChannelIndexNamespaceKey, name.data(), static_cast<Steinberg::uint32>(length+1)*sizeof(TChar)) == kResultTrue)
         {
           Steinberg::String str(name.data());

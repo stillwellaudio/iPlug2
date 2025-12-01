@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "public.sdk/source/vst/vstbus.h"
 #include "pluginterfaces/base/ustring.h"
 #include "pluginterfaces/vst/ivstevents.h"
@@ -124,8 +126,8 @@ public:
     if(numInBuses > maxNInBuses || numOutBuses > maxNOutBuses)
       return false;
   
-    std::vector<int> inputBuses;
-    std::vector<int> outputBuses;
+    ::std::vector<int> inputBuses;
+    ::std::vector<int> outputBuses;
 
     for(int i = 0; i< numInBuses; i++)
     {

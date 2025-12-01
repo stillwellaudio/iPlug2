@@ -45,7 +45,7 @@ public:
   enum TailSize
   {
       kTailNone = 0,
-      kTailInfinite = std::numeric_limits<int>::max()
+      kTailInfinite = ::std::numeric_limits<int>::max()
   };
     
   /** IPlugProcessor constructor
@@ -162,7 +162,7 @@ public:
   const IOConfig* GetIOConfig(int idx) const { return mIOConfigs.Get(idx); }
 
   /** @return Index of IOConfig that matches input and output bus vectors. Can return -1 if not found */
-  int GetIOConfigWithChanCounts(std::vector<int>& inputBuses, std::vector<int>& outputBuses);
+  int GetIOConfigWithChanCounts(::std::vector<int>& inputBuses, ::std::vector<int>& outputBuses);
   
   /** Used to determine the maximum number of input or output buses based on what was specified in the channel I/O config string
    * @param direction Return input or output bus count
@@ -314,7 +314,7 @@ private:
   /* A list of IChannelData structures corresponding to every input/output channel */
   WDL_PtrList<IChannelData<>> mChannelData[2];
   /** A multi-channel delay line used to delay the bypassed signal when a plug-in with latency is bypassed. */
-  std::unique_ptr<NChanDelayLine<sample>> mLatencyDelay = nullptr;
+  ::std::unique_ptr<NChanDelayLine<sample>> mLatencyDelay = nullptr;
 protected: // protected because it needs to be access by the API classes, and don't want a setter/getter
   /** Contains detailed information about the transport state */
   ITimeInfo mTimeInfo;

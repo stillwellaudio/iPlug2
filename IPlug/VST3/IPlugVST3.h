@@ -18,6 +18,7 @@
  */
 
 #include <vector>
+#include <algorithm>
 
 #undef stricmp
 #undef strnicmp
@@ -150,12 +151,12 @@ public:
   
   void removeAudioInputBus(Steinberg::Vst::AudioBus* pBus)
   {
-    audioInputs.erase(std::remove(audioInputs.begin(), audioInputs.end(), pBus));
+    audioInputs.erase(::std::remove(audioInputs.begin(), audioInputs.end(), pBus));
   }
    
   void removeAudioOutputBus(Steinberg::Vst::AudioBus* pBus)
   {
-    audioOutputs.erase(std::remove(audioOutputs.begin(), audioOutputs.end(), pBus));
+    audioOutputs.erase(::std::remove(audioOutputs.begin(), audioOutputs.end(), pBus));
   }
    
   // Interface    
