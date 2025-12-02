@@ -65,7 +65,17 @@ public:
   GLXContext mGLContext = nullptr;
   Atom mWmDeleteMessage;
   
-  sk_sp<GrDirectContext> mGrContext; 
+  sk_sp<GrDirectContext> mGrContext;
+  
+  // Double-click detection
+  Time mLastClickTime = 0;
+  float mLastClickX = 0;
+  float mLastClickY = 0;
+  unsigned int mLastClickButton = 0;
+  
+  // Mouse drag tracking (per-instance, not static)
+  float mPrevMouseX = 0;
+  float mPrevMouseY = 0;
 };
 
 IGraphicsLinux::IGraphicsLinux(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
@@ -82,6 +92,10 @@ IGraphicsLinux::~IGraphicsLinux() {
 
 bool IGraphicsLinux::WindowIsOpen() {
   return mImpl->mWindow != 0;
+}
+
+void* IGraphicsLinux::GetWindow() {
+  return mImpl ? (void*)mImpl->mWindow : nullptr;
 }
 
 void IGraphicsLinux::PlatformResize(bool mouseOver) {
@@ -250,13 +264,44 @@ bool IGraphicsLinux::PlatformProcessEvents() {
         if (event.xbutton.button == Button1) modifiers.L = true;
         if (event.xbutton.button == Button3) modifiers.R = true;
         
-        std::vector<IMouseInfo> points;
-        IMouseInfo info;
-        info.x = (float)event.xbutton.x;
-        info.y = (float)event.xbutton.y;
-        info.ms = modifiers;
-        points.push_back(info);
-        OnMouseDown(points);
+        float x = (float)event.xbutton.x;
+        float y = (float)event.xbutton.y;
+        
+        // Double-click detection (250ms threshold, 5 pixel tolerance)
+        Time clickTime = event.xbutton.time;
+        bool isDoubleClick = false;
+        
+        if (event.xbutton.button == mImpl->mLastClickButton &&
+            (clickTime - mImpl->mLastClickTime) < 250 &&
+            (x - mImpl->mLastClickX) > -5.f && (x - mImpl->mLastClickX) < 5.f &&
+            (y - mImpl->mLastClickY) > -5.f && (y - mImpl->mLastClickY) < 5.f)
+        {
+          isDoubleClick = true;
+          mImpl->mLastClickTime = 0; // Reset to prevent triple-click as double
+        }
+        else
+        {
+          mImpl->mLastClickTime = clickTime;
+          mImpl->mLastClickX = x;
+          mImpl->mLastClickY = y;
+          mImpl->mLastClickButton = event.xbutton.button;
+        }
+        
+        // Initialize drag tracking position for smooth first drag
+        mImpl->mPrevMouseX = x;
+        mImpl->mPrevMouseY = y;
+        
+        if (isDoubleClick) {
+          OnMouseDblClick(x, y, modifiers);
+        } else {
+          std::vector<IMouseInfo> points;
+          IMouseInfo info;
+          info.x = x;
+          info.y = y;
+          info.ms = modifiers;
+          points.push_back(info);
+          OnMouseDown(points);
+        }
         break;
       }
         
@@ -291,8 +336,6 @@ bool IGraphicsLinux::PlatformProcessEvents() {
         
         // Check if a button is pressed (dragging)
         if (state & (Button1Mask | Button3Mask)) {
-          // Get previous mouse position for delta calculation
-          static float prevX = 0, prevY = 0;
           float x = (float)event.xmotion.x;
           float y = (float)event.xmotion.y;
           
@@ -300,8 +343,8 @@ bool IGraphicsLinux::PlatformProcessEvents() {
           IMouseInfo info;
           info.x = x;
           info.y = y;
-          info.dX = x - prevX;
-          info.dY = y - prevY;
+          info.dX = x - mImpl->mPrevMouseX;
+          info.dY = y - mImpl->mPrevMouseY;
           info.ms = modifiers;
           points.push_back(info);
           
@@ -309,8 +352,8 @@ bool IGraphicsLinux::PlatformProcessEvents() {
             OnMouseDrag(points);
           }
           
-          prevX = x;
-          prevY = y;
+          mImpl->mPrevMouseX = x;
+          mImpl->mPrevMouseY = y;
         } else {
           // No button pressed, just mouse over
           OnMouseOver((float)event.xmotion.x, (float)event.xmotion.y, modifiers);

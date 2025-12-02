@@ -71,7 +71,7 @@ public:
   void CreatePlatformTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int length, const char* str) override {}
 
   // Window
-  void* GetWindow() override { return nullptr; }
+  void* GetWindow() override;
   
   // Font loading
   PlatformFontPtr LoadPlatformFont(const char* fontID, const char* fileNameOrResID) override;
