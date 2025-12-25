@@ -303,9 +303,12 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
 
     if (sideChainChannel)
     {
-      SetChannelConnections(ERoute::kInput, mMaxNChansForMainInputBus, 1, true);
+      // Fix: Attach sidechain to channel immediately after main inputs (numInChannels),
+      // not at mMaxNChansForMainInputBus which may be larger due to other I/O configs.
+      // See: docs/iPlug2-AAX-Sidechain-Bug.md for upstream issue details.
+      SetChannelConnections(ERoute::kInput, numInChannels, 1, true);
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
-      AttachBuffers(ERoute::kInput, mMaxNChansForMainInputBus, 1, pRenderInfo->mAudioInputs + sideChainChannel, numSamples);
+      AttachBuffers(ERoute::kInput, numInChannels, 1, pRenderInfo->mAudioInputs + sideChainChannel, numSamples);
     }
     else
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
