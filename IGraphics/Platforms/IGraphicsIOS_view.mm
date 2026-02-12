@@ -8,9 +8,8 @@
  ==============================================================================
 */
 
-#if !__has_feature(objc_arc)
-#error This file must be compiled with Arc. Use -fobjc-arc flag
-#endif
+// NOTE: This project compiles the AUv3 wrapper translation unit without ARC.
+// Keep this file compatible in that build context.
 
 #import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
@@ -219,7 +218,11 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   mMTLLayer.framebufferOnly = YES;
   mMTLLayer.frame = self.layer.frame;
   mMTLLayer.opaque = YES;
+#if defined(APP_STORE_BUILD) && !EH_APPSTORE_USE_BITMAP_UI
+  mMTLLayer.contentsScale = 1.0;
+#else
   mMTLLayer.contentsScale = [UIScreen mainScreen].scale;
+#endif
   
   [self.layer addSublayer: mMTLLayer];
 #endif
@@ -247,6 +250,11 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   // If we've moved to a window by the time our frame is being set, we can take its scale as our own
   if (self.window)
     scale = self.window.screen.scale;
+
+#if defined(APP_STORE_BUILD) && !EH_APPSTORE_USE_BITMAP_UI
+  // App Store iOS: clamp backing scale to 1x to reduce drawable memory.
+  scale = 1.0;
+#endif
   
   #ifdef IGRAPHICS_METAL
   [CATransaction begin];
@@ -254,6 +262,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   CGSize drawableSize = self.bounds.size;
   [self.layer setFrame:frame];
   mMTLLayer.frame = self.layer.frame;
+  mMTLLayer.contentsScale = scale;
 
   drawableSize.width *= scale;
   drawableSize.height *= scale;
@@ -957,4 +966,3 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
 }
 
 @end
-

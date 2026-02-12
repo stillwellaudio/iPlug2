@@ -314,6 +314,10 @@ public:
   /** Get the rectangular draw area for this control, within the graphics context
    * @return The control's bounds */
   const IRECT& GetRECT() const { return mRECT; }
+  
+  /** Get the rectangle to invalidate when this control is dirty.
+   * Override to invalidate a subset of mRECT for expensive controls. */
+  virtual IRECT GetInvalidateRect() const { return mRECT.GetPadded(0.75f); }
 
   /** Set the rectangular draw area for this control, within the graphics context
    * @param bounds The control's bounds */

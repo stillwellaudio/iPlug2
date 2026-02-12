@@ -1180,7 +1180,8 @@ enum MNVGTarget mnvgTarget(void) {
                             | MTLTextureUsageRenderTarget
                             | MTLTextureUsageShaderWrite;
 #if TARGET_OS_SIMULATOR
-  textureDescriptor.storageMode = MTLStorageModePrivate;
+  // iOS Simulator texture allocation is more reliable with shared storage.
+  textureDescriptor.storageMode = MTLStorageModeShared;
 #endif  // TARGET_OS_SIMULATOR
   tex->tex = [_metalLayer.device newTextureWithDescriptor:textureDescriptor];
 

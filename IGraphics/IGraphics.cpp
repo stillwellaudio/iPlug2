@@ -847,8 +847,7 @@ bool IGraphics::IsDirty(IRECTList& rects)
   auto func = [&dirty, &rects](IControl* pControl) {
     if (pControl->IsDirty())
     {
-      // N.B padding outlines for single line outlines
-      auto rectToAdd = pControl->GetRECT().GetPadded(0.75);
+      auto rectToAdd = pControl->GetInvalidateRect();
       
       if (pControl->GetParent())
       {
@@ -1782,6 +1781,9 @@ IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHoriz
     // Protection from searching for non-existent bitmaps (e.g. typos in config.h or .rc)
     assert(pAPIBitmap && "Bitmap not found");
 
+    if (!pAPIBitmap)
+      return IBitmap();
+
     // Scale or retain if needed (N.B. - scaling retains in the cache)
     if (pAPIBitmap->GetScale() != targetScale)
     {
@@ -1792,6 +1794,9 @@ IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHoriz
       RetainBitmap(IBitmap(loadedBitmap.release(), nStates, framesAreHorizontal, name), name);
     }
   }
+
+  if (!pAPIBitmap)
+    return IBitmap();
 
   return IBitmap(pAPIBitmap, nStates, framesAreHorizontal, name);
 }
@@ -1833,6 +1838,9 @@ IBitmap IGraphics::LoadBitmap(const char *name, const void *pData, int dataSize,
     // Also protects from invalid bitmap data.
     assert(pAPIBitmap && "Bitmap not found");
 
+    if (!pAPIBitmap)
+      return IBitmap();
+
     // Scale or retain if needed (N.B. - scaling retains in the cache)
     if (pAPIBitmap->GetScale() != targetScale)
     {
@@ -1843,6 +1851,9 @@ IBitmap IGraphics::LoadBitmap(const char *name, const void *pData, int dataSize,
       RetainBitmap(IBitmap(loadedBitmap.release(), nStates, framesAreHorizontal, name), name);
     }
   }
+
+  if (!pAPIBitmap)
+    return IBitmap();
 
   return IBitmap(pAPIBitmap, nStates, framesAreHorizontal, name);
 }
