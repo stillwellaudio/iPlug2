@@ -69,6 +69,14 @@ public:
    * @param nFrames The block size for this block: number of samples per channel.*/
   virtual void ProcessBlock(sample** inputs, sample** outputs, int nFrames);
 
+  /** Override in your plug-in class if internal state must keep advancing while the wrapper owns the audible bypass path.
+   * This is useful for hosts/formats such as AAX/Pro Tools, where the wrapper may output latency-compensated dry audio
+   * while the plug-in still needs to keep latency-bearing DSP state (oversamplers, lookahead, detector state, etc.) warm.
+   * THIS METHOD IS CALLED BY THE HIGH PRIORITY AUDIO THREAD - You should be careful not to do any unbounded, blocking operations such as file I/O which could cause audio dropouts
+   * @param inputs Two-dimensional array containing the non-interleaved input buffers of audio samples for all channels
+   * @param nFrames The block size for this block: number of samples per channel.*/
+  virtual void ProcessWhileBypassed(sample** inputs, int nFrames);
+
   /** Override this method to handle incoming MIDI messages. The method is called prior to ProcessBlock().
    * You can use IMidiQueue in combination with this method in order to queue the message and process at the appropriate time in ProcessBlock()
    * THIS METHOD IS CALLED BY THE HIGH PRIORITY AUDIO THREAD - You should be careful not to do any unbounded, blocking operations such as file I/O which could cause audio dropouts
@@ -285,6 +293,7 @@ protected:
   void SetTimeInfo(const ITimeInfo& timeInfo) { mTimeInfo = timeInfo; }
   void SetRenderingOffline(bool renderingOffline) { mRenderingOffline = renderingOffline; }
   const WDL_String& GetChannelLabel(ERoute direction, int idx) { return mChannelData[direction].Get(idx)->mLabel; }
+  sample** GetScratchData(ERoute direction) { return mScratchData[direction].Get(); }
 
 private:
   /** See EIPlugPluginTypes */
