@@ -332,17 +332,29 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     AttachBuffers(ERoute::kOutput, 0, maxNOutChans, pRenderInfo->mAudioOutputs, numSamples);
   }
 
+  const bool handlesHostBypassInternally = HandlesHostBypassInternally();
+
   if (bypass != GetBypassed())
   {
     SetBypassed(bypass);
-    mBypassFadeActive = true;
-    mBypassFadeToDry = bypass;
-    mBypassFadePos = 0;
-    const int fadeLength = static_cast<int>(GetSampleRate() * 0.01);
-    mBypassFadeLength = fadeLength > 0 ? fadeLength : 1;
+    OnHostBypassChanged(bypass);
+
+    if (handlesHostBypassInternally)
+    {
+      mBypassFadeActive = false;
+      mBypassFadePos = 0;
+    }
+    else
+    {
+      mBypassFadeActive = true;
+      mBypassFadeToDry = bypass;
+      mBypassFadePos = 0;
+      const int fadeLength = static_cast<int>(GetSampleRate() * 0.01);
+      mBypassFadeLength = fadeLength > 0 ? fadeLength : 1;
+    }
   }
 
-  const bool bypassFadeActive = mBypassFadeActive;
+  const bool bypassFadeActive = mBypassFadeActive && !handlesHostBypassInternally;
   
   if (bypassFadeActive)
   {
@@ -436,7 +448,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     if(strcmp(AAX_PLUG_CATEGORY_STR, "Dynamics") == 0)
       *pRenderInfo->mMeters[2] = fmax(mMeterLevelGR, *pRenderInfo->mMeters[2]);
   }
-  else if (bypass) {
+  else if (bypass && !handlesHostBypassInternally) {
     mMeterLevelIn = GetInputBufferMaxValue(pRenderInfo, numSamples);
     mMeterLevelGR = 0.;
     ENTER_PARAMS_MUTEX
