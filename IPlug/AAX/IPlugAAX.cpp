@@ -341,14 +341,16 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   }
 
   const bool handlesHostBypassInternally = HandlesHostBypassInternally();
+  const bool previousBypassed = GetBypassed();
+  const bool bypassChanged = (bypass != previousBypassed);
 
-  if (bypass != GetBypassed())
+  if (bypassChanged)
   {
-    SetBypassed(bypass);
     OnHostBypassChanged(bypass);
 
     if (handlesHostBypassInternally)
     {
+      SetBypassed(bypass);
       mBypassFadeActive = false;
       mBypassFadePos = 0;
     }
@@ -501,6 +503,9 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       *pRenderInfo->mMeters[2] = fmax(mMeterLevelGR, *pRenderInfo->mMeters[2]);
   }
   else if (bypass && !handlesHostBypassInternally) {
+    if (!previousBypassed)
+      SetBypassed(true);
+
     mMeterLevelIn = GetInputBufferMaxValue(pRenderInfo, numSamples);
     mMeterLevelGR = 0.;
     ENTER_PARAMS_MUTEX
@@ -515,7 +520,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   }
   else 
   {
-    if (previousBypassed)
+    if (!handlesHostBypassInternally && previousBypassed)
       SetBypassed(false);
 
     int32_t num, denom;
