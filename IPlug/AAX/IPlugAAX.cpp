@@ -24,6 +24,14 @@
 
 using namespace iplug;
 
+namespace
+{
+  // Keep the AAX bypass overlap very short. A long overlap reduces clicks,
+  // but can expose audible cancellation when the processed and dry paths are
+  // close in level yet not sample-identical.
+  constexpr int kAAXBypassFadeSamples = 64;
+}
+
 AAX_CEffectParameters *AAX_CALLBACK IPlugAAX::Create()
 {
   return MakePlug(InstanceInfo());
@@ -395,23 +403,67 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     mMeterLevelGR = 0.;
 
     ENTER_PARAMS_MUTEX
-    ProcessBuffers((sample) 0.0, numSamples);
-    for (int ch = 0; ch < maxNOutChans; ++ch)
+
+    auto copyWetScratch = [&]()
     {
-      if (IsChannelConnected(ERoute::kOutput, ch))
-        memcpy(mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get(),
-               GetScratchData(ERoute::kOutput)[ch],
-               numSamples * sizeof(sample));
+      for (int ch = 0; ch < maxNOutChans; ++ch)
+      {
+        if (IsChannelConnected(ERoute::kOutput, ch))
+        {
+          memcpy(mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get(),
+                 GetScratchData(ERoute::kOutput)[ch],
+                 numSamples * sizeof(sample));
+        }
+      }
+    };
+
+    auto copyDryScratch = [&]()
+    {
+      for (int ch = 0; ch < maxNOutChans; ++ch)
+      {
+        if (IsChannelConnected(ERoute::kOutput, ch))
+        {
+          memcpy(mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get(),
+                 GetScratchData(ERoute::kOutput)[ch],
+                 numSamples * sizeof(sample));
+        }
+      }
+    };
+
+    // Render the "from" state first, then flip to the target state before
+    // capturing the destination side of the transition.
+    if (bypassChanged && bypass)
+    {
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+
+      SetBypassed(true);
+      ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
+    }
+    else if (bypassChanged && !bypass)
+    {
+      ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
+
+      SetBypassed(false);
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+    }
+    else
+    {
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+
+      if (bypass)
+        ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
     }
 
-    PassThroughBuffers((sample) 0.0, numSamples);
-    for (int ch = 0; ch < maxNOutChans; ++ch)
-    {
-      if (IsChannelConnected(ERoute::kOutput, ch))
-        memcpy(mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get(),
-               GetScratchData(ERoute::kOutput)[ch],
-               numSamples * sizeof(sample));
-    }
     LEAVE_PARAMS_MUTEX
 
     for (int ch = 0; ch < maxNOutChans; ++ch)
@@ -463,6 +515,9 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   }
   else 
   {
+    if (previousBypassed)
+      SetBypassed(false);
+
     int32_t num, denom;
     int64_t ppqPos, samplePos, cStart, cEnd;
     ITimeInfo timeInfo;
