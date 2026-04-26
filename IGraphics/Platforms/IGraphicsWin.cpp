@@ -54,6 +54,153 @@ typedef HGLRC(WINAPI* PFNWGLCREATECONTEXTATTRIBSARBPROC) (HDC hDC, HGLRC hShareC
 #define WGL_CONTEXT_CORE_PROFILE_BIT_ARB  0x00000001
 #endif
 
+#pragma mark - File drop target
+
+namespace
+{
+class IGraphicsWinFileDropTarget final : public IDropTarget
+{
+public:
+  IGraphicsWinFileDropTarget(IGraphicsWin* pGraphics, HWND hWnd)
+  : mGraphics(pGraphics)
+  , mHWnd(hWnd)
+  {
+  }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override
+  {
+    if (!object)
+      return E_POINTER;
+
+    if (riid == IID_IUnknown || riid == IID_IDropTarget)
+    {
+      *object = static_cast<IDropTarget*>(this);
+      AddRef();
+      return S_OK;
+    }
+
+    *object = nullptr;
+    return E_NOINTERFACE;
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++mRefCount; }
+
+  ULONG STDMETHODCALLTYPE Release() override
+  {
+    const ULONG refCount = --mRefCount;
+    if (refCount == 0)
+      delete this;
+    return refCount;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* dataObject, DWORD, POINTL, DWORD* effect) override
+  {
+    mAcceptsDrop = HasFileDrop(dataObject);
+    SetDropEffect(effect, mAcceptsDrop);
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL, DWORD* effect) override
+  {
+    SetDropEffect(effect, mAcceptsDrop);
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragLeave() override
+  {
+    mAcceptsDrop = false;
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE Drop(IDataObject* dataObject, DWORD, POINTL point, DWORD* effect) override
+  {
+    const bool handled = mAcceptsDrop && DeliverFileDrop(dataObject, point);
+    SetDropEffect(effect, handled);
+    mAcceptsDrop = false;
+    return S_OK;
+  }
+
+private:
+  static FORMATETC FileDropFormat()
+  {
+    FORMATETC format = { CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    return format;
+  }
+
+  static bool HasFileDrop(IDataObject* dataObject)
+  {
+    if (!dataObject)
+      return false;
+
+    FORMATETC format = FileDropFormat();
+    return dataObject->QueryGetData(&format) == S_OK;
+  }
+
+  static void SetDropEffect(DWORD* effect, bool acceptsDrop)
+  {
+    if (effect)
+      *effect = (acceptsDrop && (*effect & DROPEFFECT_COPY)) ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+  }
+
+  bool DeliverFileDrop(IDataObject* dataObject, POINTL point)
+  {
+    if (!mGraphics || !mHWnd || !dataObject)
+      return false;
+
+    FORMATETC format = FileDropFormat();
+    STGMEDIUM medium = {};
+    if (FAILED(dataObject->GetData(&format, &medium)))
+      return false;
+
+    std::vector<std::string> paths;
+    HDROP hDrop = static_cast<HDROP>(medium.hGlobal);
+    const UINT numDroppedFiles = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+    paths.reserve(numDroppedFiles);
+
+    for (UINT i = 0; i < numDroppedFiles; ++i)
+    {
+      const UINT pathLen = DragQueryFileW(hDrop, i, nullptr, 0);
+      std::vector<wchar_t> path(pathLen + 1, L'\0');
+      if (DragQueryFileW(hDrop, i, path.data(), static_cast<UINT>(path.size())))
+        paths.emplace_back(UTF16AsUTF8(path.data()).Get());
+    }
+
+    ReleaseStgMedium(&medium);
+
+    if (paths.empty())
+      return false;
+
+    POINT clientPoint = { static_cast<LONG>(point.x), static_cast<LONG>(point.y) };
+    ScreenToClient(mHWnd, &clientPoint);
+
+    const float scale = mGraphics->GetTotalScale();
+    const float x = clientPoint.x / scale;
+    const float y = clientPoint.y / scale;
+
+    if (paths.size() == 1)
+    {
+      mGraphics->OnDrop(paths[0].c_str(), x, y);
+    }
+    else
+    {
+      std::vector<const char*> pathPtrs;
+      pathPtrs.reserve(paths.size());
+      for (const auto& path : paths)
+        pathPtrs.push_back(path.c_str());
+
+      mGraphics->OnDropMultiple(pathPtrs, x, y);
+    }
+
+    return true;
+  }
+
+  ULONG mRefCount = 1;
+  IGraphicsWin* mGraphics = nullptr;
+  HWND mHWnd = nullptr;
+  bool mAcceptsDrop = false;
+};
+}
+
 #pragma mark - Static storage
 
 StaticStorage<IGraphicsWin::InstalledFont> IGraphicsWin::sPlatformFontCache;
@@ -623,10 +770,12 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       {
         pGraphics->OnDrop(&pathPtrs[0][0], p.x / scale, p.y / scale);
       }
-      else 
+      else if (numDroppedFiles > 1)
       {
         pGraphics->OnDropMultiple(pathPtrs, p.x / scale, p.y / scale);
       }
+
+      DragFinish(hdrop);
       
       return 0;
     }
@@ -1058,6 +1207,20 @@ void* IGraphicsWin::OpenWindow(void* pParent)
 
   mPlugWnd = CreateWindowW(wndClassName, L"IPlug", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, x, y, w, h, mParentWnd, 0, mHInstance, this);
 
+  if (mPlugWnd)
+  {
+    const HRESULT oleResult = OleInitialize(nullptr);
+    mOleInitialized = SUCCEEDED(oleResult);
+
+    if (mOleInitialized)
+    {
+      auto* dropTarget = new IGraphicsWinFileDropTarget(this, mPlugWnd);
+      const HRESULT registerResult = RegisterDragDrop(mPlugWnd, dropTarget);
+      mOleDropTargetRegistered = SUCCEEDED(registerResult);
+      dropTarget->Release();
+    }
+  }
+
   HDC dc = GetDC(mPlugWnd);
   SetPlatformContext(dc);
   ReleaseDC(mPlugWnd, dc);
@@ -1204,6 +1367,18 @@ void IGraphicsWin::CloseWindow()
       mTooltipWnd = 0;
       mShowingTooltip = false;
       mTooltipIdx = -1;
+    }
+
+    if (mOleDropTargetRegistered)
+    {
+      RevokeDragDrop(mPlugWnd);
+      mOleDropTargetRegistered = false;
+    }
+
+    if (mOleInitialized)
+    {
+      OleUninitialize();
+      mOleInitialized = false;
     }
 
     DestroyWindow(mPlugWnd);
