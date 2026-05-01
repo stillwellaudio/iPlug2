@@ -138,6 +138,8 @@ private:
   WNDPROC mDefEditProc = nullptr;
   HFONT mEditFont = nullptr;
   DWORD mPID = 0;
+  bool mOleInitialized = false;
+  bool mOleDropTargetRegistered = false;
 
   void StartVBlankThread(HWND hWnd);
   void StopVBlankThread();
@@ -170,5 +172,4 @@ private:
 
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE
-
 
