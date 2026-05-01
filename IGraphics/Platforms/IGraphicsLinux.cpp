@@ -371,7 +371,8 @@ void* IGraphicsLinux::GetWindow() {
 }
 
 void IGraphicsLinux::PlatformResize(bool mouseOver) {
-  // Todo: Check actual window size via XGetGeometry and call OnResize
+  if (mImpl->mDisplay && mImpl->mWindow)
+    XResizeWindow(mImpl->mDisplay, mImpl->mWindow, WindowWidth(), WindowHeight());
 }
 
 void* IGraphicsLinux::OpenWindow(void* pParent) {
@@ -403,15 +404,16 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
                    FocusChangeMask;
 
   mImpl->mParentWindow = (::Window)pParent;
+  GetDelegate()->EditorResizeFromUI(WindowWidth(), WindowHeight(), true);
 
   if (mImpl->mParentWindow) {
     mImpl->mWindow = XCreateWindow(mImpl->mDisplay, mImpl->mParentWindow, 
-                                 0, 0, Width(), Height(), 0, 
+                                 0, 0, WindowWidth(), WindowHeight(), 0,
                                  vi->depth, InputOutput, vi->visual, 
                                  CWColormap | CWEventMask, &swa);
   } else {
     mImpl->mWindow = XCreateWindow(mImpl->mDisplay, root, 
-                                 0, 0, Width(), Height(), 0, 
+                                 0, 0, WindowWidth(), WindowHeight(), 0,
                                  vi->depth, InputOutput, vi->visual, 
                                  CWColormap | CWEventMask, &swa);
     
