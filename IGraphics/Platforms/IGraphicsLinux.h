@@ -97,6 +97,7 @@ private:
   void HandleXdndDrop(const XClientMessageEvent& event);
   void HandleXdndLeave(const XClientMessageEvent& event);
   void HandleXdndSelectionNotify(const XSelectionEvent& event);
+  void RegisterXdndProxyWindows();
   void RestoreParentXdndProperties();
 };
 

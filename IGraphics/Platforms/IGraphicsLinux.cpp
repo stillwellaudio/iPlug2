@@ -34,12 +34,48 @@ static constexpr long X11_None = 0L;
 #include "include/gpu/ganesh/gl/GrGLDirectContext.h"  // Defines GrDirectContexts namespace
 
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdarg>
 #include <string>
 #include <vector>
 #include <unistd.h>
 
 using namespace iplug;
 using namespace iplug::igraphics;
+
+static bool LinuxXdndDebugEnabled()
+{
+  static const bool enabled = std::getenv("IPLUG_LINUX_XDND_DEBUG") != nullptr;
+  return enabled;
+}
+
+static void LinuxXdndLog(const char* format, ...)
+{
+  if (!LinuxXdndDebugEnabled())
+    return;
+
+  va_list args;
+  va_start(args, format);
+  std::fprintf(stderr, "[iPlug2 Xdnd] ");
+  std::vfprintf(stderr, format, args);
+  std::fprintf(stderr, "\n");
+  va_end(args);
+}
+
+static const char* AtomName(Display* display, Atom atom, WDL_String& storage)
+{
+  if (!display || atom == 0)
+    return "<none>";
+
+  char* name = XGetAtomName(display, atom);
+  if (!name)
+    return "<unknown>";
+
+  storage.Set(name);
+  XFree(name);
+  return storage.Get();
+}
 
 // --- Key Mapping Helper ---
 static void XStateToModifiers(unsigned int state, bool& shift, bool& control, bool& alt)
@@ -190,6 +226,36 @@ static bool ReadSingleLongProperty(Display* display, ::Window window, Atom prope
   return valid;
 }
 
+static std::vector<::Window> GetAncestorWindows(Display* display, ::Window window)
+{
+  std::vector<::Window> ancestors;
+  if (!display || !window)
+    return ancestors;
+
+  ::Window current = window;
+  for (;;)
+  {
+    ::Window root = 0;
+    ::Window parent = 0;
+    ::Window* children = nullptr;
+    unsigned int childCount = 0;
+
+    if (!XQueryTree(display, current, &root, &parent, &children, &childCount))
+      break;
+
+    if (children)
+      XFree(children);
+
+    if (!parent || parent == root)
+      break;
+
+    ancestors.push_back(parent);
+    current = parent;
+  }
+
+  return ancestors;
+}
+
 static int HexNibble(char c)
 {
   if (c >= '0' && c <= '9') return c - '0';
@@ -260,6 +326,19 @@ static std::vector<std::string> ParseTextUriList(const char* data)
 
 class IGraphicsLinux::Impl {
 public:
+  struct XdndPropertyBackup
+  {
+    ::Window window = 0;
+    bool hadAware = false;
+    bool hadProxy = false;
+    long awareValue = 0;
+    long proxyValue = 0;
+    Atom awareType = 0;
+    Atom proxyType = 0;
+    int awareFormat = 0;
+    int proxyFormat = 0;
+  };
+
   Display* mDisplay = nullptr;
   ::Window mWindow = 0;  // Use global namespace Window to avoid X11 conflicts
   ::Window mParentWindow = 0;
@@ -291,14 +370,7 @@ public:
   bool mXdndAcceptsUriList = false;
   float mXdndDropX = 0.f;
   float mXdndDropY = 0.f;
-  bool mParentHadXdndAware = false;
-  bool mParentHadXdndProxy = false;
-  long mParentXdndAwareValue = 0;
-  long mParentXdndProxyValue = 0;
-  Atom mParentXdndAwareType = 0;
-  Atom mParentXdndProxyType = 0;
-  int mParentXdndAwareFormat = 0;
-  int mParentXdndProxyFormat = 0;
+  std::vector<XdndPropertyBackup> mXdndPropertyBackups;
   
   sk_sp<GrDirectContext> mGrContext;
   
@@ -410,22 +482,7 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
                   XA_WINDOW, 32, PropModeReplace,
                   reinterpret_cast<unsigned char*>(&xdndProxyWindow), 1);
 
-  if (mImpl->mParentWindow)
-  {
-    mImpl->mParentHadXdndAware = ReadSingleLongProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
-                                                        mImpl->mParentXdndAwareValue, mImpl->mParentXdndAwareType,
-                                                        mImpl->mParentXdndAwareFormat);
-    mImpl->mParentHadXdndProxy = ReadSingleLongProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
-                                                        mImpl->mParentXdndProxyValue, mImpl->mParentXdndProxyType,
-                                                        mImpl->mParentXdndProxyFormat);
-
-    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
-                    XA_ATOM, 32, PropModeReplace,
-                    reinterpret_cast<unsigned char*>(&xdndVersion), 1);
-    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
-                    XA_WINDOW, 32, PropModeReplace,
-                    reinterpret_cast<unsigned char*>(&xdndProxyWindow), 1);
-  }
+  RegisterXdndProxyWindows();
 
   XSetLocaleModifiers("");
   mImpl->mInputMethod = XOpenIM(mImpl->mDisplay, nullptr, nullptr, nullptr);
@@ -808,6 +865,12 @@ void IGraphicsLinux::HandleXdndEnter(const XClientMessageEvent& event)
   {
     mImpl->mXdndAcceptsUriList = XdndMessageHasUriList(event, mImpl->mTextUriList);
   }
+
+  LinuxXdndLog("enter source=%lu target=%lu hasMoreTypes=%d acceptsUriList=%d",
+               static_cast<unsigned long>(mImpl->mXdndSource),
+               static_cast<unsigned long>(mImpl->mXdndTarget),
+               hasMoreTypes ? 1 : 0,
+               mImpl->mXdndAcceptsUriList ? 1 : 0);
 }
 
 void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
@@ -832,6 +895,12 @@ void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
   mImpl->mXdndDropX = static_cast<float>(winX) / scale;
   mImpl->mXdndDropY = static_cast<float>(winY) / scale;
 
+  LinuxXdndLog("position source=%lu target=%lu root=%d,%d local=%.1f,%.1f accepts=%d",
+               static_cast<unsigned long>(mImpl->mXdndSource),
+               static_cast<unsigned long>(mImpl->mXdndTarget),
+               rootX, rootY, mImpl->mXdndDropX, mImpl->mXdndDropY,
+               mImpl->mXdndAcceptsUriList ? 1 : 0);
+
   XClientMessageEvent reply = {};
   reply.type = ClientMessage;
   reply.display = mImpl->mDisplay;
@@ -850,6 +919,12 @@ void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
 
 void IGraphicsLinux::HandleXdndDrop(const XClientMessageEvent& event)
 {
+  LinuxXdndLog("drop source=%lu target=%lu accepts=%d time=%ld",
+               static_cast<unsigned long>(mImpl->mXdndSource),
+               static_cast<unsigned long>(mImpl->mXdndTarget),
+               mImpl->mXdndAcceptsUriList ? 1 : 0,
+               event.data.l[2]);
+
   if (!mImpl->mXdndAcceptsUriList)
   {
     XClientMessageEvent finished = {};
@@ -874,6 +949,8 @@ void IGraphicsLinux::HandleXdndDrop(const XClientMessageEvent& event)
 
 void IGraphicsLinux::HandleXdndLeave(const XClientMessageEvent& event)
 {
+  LinuxXdndLog("leave source=%lu", static_cast<unsigned long>(event.data.l[0]));
+
   if (static_cast<::Window>(event.data.l[0]) != mImpl->mXdndSource)
     return;
 
@@ -897,18 +974,32 @@ void IGraphicsLinux::HandleXdndSelectionNotify(const XSelectionEvent& event)
     const int result = XGetWindowProperty(mImpl->mDisplay, mImpl->mWindow, event.property,
                                           0, 1024 * 1024, True, AnyPropertyType,
                                           &actualType, &actualFormat, &itemCount, &bytesAfter, &data);
+    WDL_String atomName;
+    LinuxXdndLog("selection property=%lu result=%d type=%s format=%d items=%lu bytesAfter=%lu",
+                 static_cast<unsigned long>(event.property),
+                 result,
+                 AtomName(mImpl->mDisplay, actualType, atomName),
+                 actualFormat,
+                 itemCount,
+                 bytesAfter);
+
     if (result == Success && data && actualFormat == 8)
     {
       std::string payload(reinterpret_cast<const char*>(data), itemCount);
       std::vector<std::string> paths = ParseTextUriList(payload.c_str());
+      LinuxXdndLog("selection paths=%zu", paths.size());
 
       if (paths.size() == 1)
       {
+        LinuxXdndLog("drop path=%s", paths[0].c_str());
         OnDrop(paths[0].c_str(), mImpl->mXdndDropX, mImpl->mXdndDropY);
         success = true;
       }
       else if (paths.size() > 1)
       {
+        for (const std::string& path : paths)
+          LinuxXdndLog("drop path=%s", path.c_str());
+
         std::vector<const char*> pathPtrs;
         pathPtrs.reserve(paths.size());
         for (const std::string& path : paths)
@@ -933,42 +1024,84 @@ void IGraphicsLinux::HandleXdndSelectionNotify(const XSelectionEvent& event)
   finished.data.l[2] = success ? mImpl->mXdndActionCopy : X11_None;
   XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&finished));
   XFlush(mImpl->mDisplay);
+  LinuxXdndLog("finished success=%d", success ? 1 : 0);
+}
+
+void IGraphicsLinux::RegisterXdndProxyWindows()
+{
+  if (!mImpl->mDisplay || !mImpl->mWindow)
+    return;
+
+  long xdndVersion = 5;
+  long xdndProxyWindow = static_cast<long>(mImpl->mWindow);
+  const std::vector<::Window> ancestors = GetAncestorWindows(mImpl->mDisplay, mImpl->mWindow);
+
+  mImpl->mXdndPropertyBackups.clear();
+  mImpl->mXdndPropertyBackups.reserve(ancestors.size());
+
+  for (::Window window : ancestors)
+  {
+    IGraphicsLinux::Impl::XdndPropertyBackup backup;
+    backup.window = window;
+    backup.hadAware = ReadSingleLongProperty(mImpl->mDisplay, window, mImpl->mXdndAware,
+                                             backup.awareValue, backup.awareType, backup.awareFormat);
+    backup.hadProxy = ReadSingleLongProperty(mImpl->mDisplay, window, mImpl->mXdndProxy,
+                                             backup.proxyValue, backup.proxyType, backup.proxyFormat);
+    mImpl->mXdndPropertyBackups.push_back(backup);
+
+    XChangeProperty(mImpl->mDisplay, window, mImpl->mXdndAware,
+                    XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&xdndVersion), 1);
+    XChangeProperty(mImpl->mDisplay, window, mImpl->mXdndProxy,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&xdndProxyWindow), 1);
+
+    LinuxXdndLog("registered proxy window=%lu proxy=%lu hadAware=%d hadProxy=%d",
+                 static_cast<unsigned long>(window),
+                 static_cast<unsigned long>(mImpl->mWindow),
+                 backup.hadAware ? 1 : 0,
+                 backup.hadProxy ? 1 : 0);
+  }
+
+  XFlush(mImpl->mDisplay);
 }
 
 void IGraphicsLinux::RestoreParentXdndProperties()
 {
-  if (!mImpl->mDisplay || !mImpl->mParentWindow)
+  if (!mImpl->mDisplay)
     return;
 
-  if (mImpl->mParentHadXdndAware)
+  for (auto it = mImpl->mXdndPropertyBackups.rbegin(); it != mImpl->mXdndPropertyBackups.rend(); ++it)
   {
-    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
-                    mImpl->mParentXdndAwareType, mImpl->mParentXdndAwareFormat,
-                    PropModeReplace,
-                    reinterpret_cast<unsigned char*>(&mImpl->mParentXdndAwareValue), 1);
-  }
-  else
-  {
-    XDeleteProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware);
-  }
+    const IGraphicsLinux::Impl::XdndPropertyBackup& backup = *it;
 
-  if (mImpl->mParentHadXdndProxy)
-  {
-    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
-                    mImpl->mParentXdndProxyType, mImpl->mParentXdndProxyFormat,
-                    PropModeReplace,
-                    reinterpret_cast<unsigned char*>(&mImpl->mParentXdndProxyValue), 1);
-  }
-  else
-  {
-    XDeleteProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy);
+    if (backup.hadAware)
+    {
+      XChangeProperty(mImpl->mDisplay, backup.window, mImpl->mXdndAware,
+                      backup.awareType, backup.awareFormat, PropModeReplace,
+                      reinterpret_cast<const unsigned char*>(&backup.awareValue), 1);
+    }
+    else
+    {
+      XDeleteProperty(mImpl->mDisplay, backup.window, mImpl->mXdndAware);
+    }
+
+    if (backup.hadProxy)
+    {
+      XChangeProperty(mImpl->mDisplay, backup.window, mImpl->mXdndProxy,
+                      backup.proxyType, backup.proxyFormat, PropModeReplace,
+                      reinterpret_cast<const unsigned char*>(&backup.proxyValue), 1);
+    }
+    else
+    {
+      XDeleteProperty(mImpl->mDisplay, backup.window, mImpl->mXdndProxy);
+    }
+
+    LinuxXdndLog("restored proxy window=%lu", static_cast<unsigned long>(backup.window));
   }
 
   XFlush(mImpl->mDisplay);
-
-  mImpl->mParentWindow = 0;
-  mImpl->mParentHadXdndAware = false;
-  mImpl->mParentHadXdndProxy = false;
+  mImpl->mXdndPropertyBackups.clear();
 }
 
 void IGraphicsLinux::GetMouseLocation(float& x, float& y) const {
