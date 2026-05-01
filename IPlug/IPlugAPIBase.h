@@ -109,6 +109,14 @@ public:
 
   /** Override this method to get an "idle"" call on the main thread */
   virtual void OnIdle() {}
+
+  /** Override this method to respond to host-controlled bypass changes in API layers that expose bypass outside the normal parameter path.
+   * This method may be called from the realtime audio thread, so implementations must remain lock-free and bounded. */
+  virtual void OnHostBypassChanged(bool bypassed) { (void) bypassed; }
+
+  /** Override and return true if host bypass should continue through the plug-in's normal ProcessBlock() path,
+   * instead of wrapper-managed passthrough/crossfade. */
+  virtual bool HandlesHostBypassInternally() const { return false; }
     
 #pragma mark - Methods you can call - some of which have custom implementations in the API classes, some implemented in IPlugAPIBase.cpp
   /** SetParameterValue is called from the UI in the middle of a parameter change gesture (possibly via delegate) in order to update a parameter's value.

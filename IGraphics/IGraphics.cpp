@@ -96,7 +96,8 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   if (w == Width() && h == Height() && scale == GetDrawScale()) return;
   
   //DBGMSG("resize %i, resize %i, scale %f\n", w, h, scale);
-  ReleaseMouseCapture();
+  if (!mResizingInProcess)
+    ReleaseMouseCapture();
 
   mDrawScale = scale;
   mWidth = w;
@@ -1102,6 +1103,14 @@ void IGraphics::OnMouseUp(const std::vector<IMouseInfo>& points)
   if (mResizingInProcess)
   {
     EndDragResize();
+    mResizeIsShiftDragging = false;
+  }
+
+  if (mPendingControlDrawScale > 0.f)
+  {
+    const float pendingScale = mPendingControlDrawScale;
+    mPendingControlDrawScale = 0.f;
+    ApplyControlDrawScale(pendingScale);
   }
     
   if (points.size() == 1 && !points[0].ms.IsTouch())
@@ -1171,7 +1180,10 @@ void IGraphics::OnMouseDrag(const std::vector<IMouseInfo>& points)
         points[0].x, points[0].y, points[0].dX, points[0].dY, points[0].ms.L, points[0].ms.R, points[0].ms.S, points[0].ms.C, points[0].ms.A);
 
   if (mResizingInProcess && points.size() == 1)
+  {
+    mResizeIsShiftDragging = points[0].ms.S;
     OnDragResize(points[0].x, points[0].y);
+  }
   else if (ControlIsCaptured() && !IsInPlatformTextEntry())
   {
     IControl *textEntry = nullptr;
@@ -1281,13 +1293,43 @@ bool IGraphics::OnKeyUp(float x, float y, const IKeyPress& key)
 
 void IGraphics::OnDrop(const char* str, float x, float y)
 {
-  IControl* pControl = GetMouseControl(x, y, false);
+  IControl* pControl = nullptr;
+
+  for (auto c = NControls() - 1; c >= 0; --c)
+  {
+    IControl* pCandidate = GetControl(c);
+
+    if (!pCandidate->IsHidden() && pCandidate->IsDropTarget() && pCandidate->IsHit(x, y))
+    {
+      pControl = pCandidate;
+      break;
+    }
+  }
+
+  if (!pControl)
+    pControl = GetMouseControl(x, y, false);
+
   if (pControl) pControl->OnDrop(str);
 }
 
 void IGraphics::OnDropMultiple(const std::vector<const char*>& paths, float x, float y)
 {
-  IControl* pControl = GetMouseControl(x, y, false);
+  IControl* pControl = nullptr;
+
+  for (auto c = NControls() - 1; c >= 0; --c)
+  {
+    IControl* pCandidate = GetControl(c);
+
+    if (!pCandidate->IsHidden() && pCandidate->IsDropTarget() && pCandidate->IsHit(x, y))
+    {
+      pControl = pCandidate;
+      break;
+    }
+  }
+
+  if (!pControl)
+    pControl = GetMouseControl(x, y, false);
+
   if (pControl) pControl->OnDropMultiple(paths);
 }
 
@@ -1536,8 +1578,7 @@ void IGraphics::OnAppearanceChanged(EUIAppearance appearance)
 IBitmap IGraphics::GetScaledBitmap(IBitmap& src)
 {
   //TODO: bug with # frames!
-//  return LoadBitmap(src.GetResourceName().Get(), src.N(), src.GetFramesAreHorizontal(), (GetRoundedScreenScale() == 1 && GetDrawScale() > 1.) ? 2 : 0 /* ??? */);
-  return LoadBitmap(src.GetResourceName().Get(), src.N(), src.GetFramesAreHorizontal(), GetRoundedScreenScale());
+  return LoadBitmap(src.GetResourceName().Get(), src.N(), src.GetFramesAreHorizontal(), GetRoundedBitmapScale());
 }
 
 void IGraphics::EnableTooltips(bool enable)
@@ -1737,7 +1778,7 @@ WDL_TypedBuf<uint8_t> IGraphics::LoadResource(const char* fileNameOrResID, const
 IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHorizontal, int targetScale)
 {
   if (targetScale == 0)
-    targetScale = GetRoundedScreenScale();
+    targetScale = GetRoundedBitmapScale();
 
   StaticStorage<APIBitmap>::Accessor storage(sBitmapCache);
   APIBitmap* pAPIBitmap = storage.Find(name, targetScale);
@@ -1799,7 +1840,7 @@ IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHoriz
 IBitmap IGraphics::LoadBitmap(const char *name, const void *pData, int dataSize, int nStates, bool framesAreHorizontal, int targetScale)
 {
   if (targetScale == 0)
-    targetScale = GetRoundedScreenScale();
+    targetScale = GetRoundedBitmapScale();
 
   StaticStorage<APIBitmap>::Accessor storage(sBitmapCache);
   APIBitmap* pAPIBitmap = storage.Find(name, targetScale);
@@ -1861,7 +1902,7 @@ void IGraphics::RetainBitmap(const IBitmap& bitmap, const char* cacheName)
 
 IBitmap IGraphics::ScaleBitmap(const IBitmap& inBitmap, const char* name, int scale)
 {
-  int screenScale = GetRoundedScreenScale();
+  float screenScale = GetScreenScale();
   float drawScale = GetDrawScale();
 
   mScreenScale = scale;

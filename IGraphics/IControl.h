@@ -146,6 +146,9 @@ public:
   /** Implement to handle multiple items drag 'n dropped onto this control */
   virtual void OnDropMultiple(const std::vector<const char*>& paths) { OnDrop(paths[0]); }
 
+  /** Override to participate in drag-and-drop target lookup without taking mouse hit-testing. */
+  virtual bool IsDropTarget() const { return false; }
+
   /** Implement to do something when graphics is scaled globally (e.g. moves to different DPI screen) */
   virtual void OnRescale() {}
 

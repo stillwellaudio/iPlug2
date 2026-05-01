@@ -128,12 +128,20 @@ protected:
   void SetGRBufferMaxValue(double x) { mMeterLevelGR = x; };
 
 private:
+  void ResizeBypassFadeBuffers(int blockSize);
+
   AAX_CParameter<bool>* mBypassParameter = nullptr;
   AAX_ITransport* mTransport = nullptr;
   WDL_PtrList<WDL_String> mParamIDs;
   IMidiQueue mMidiOutputQueue;
   int mMaxNChansForMainInputBus = 0;
   WDL_String mTrackName;
+  std::vector<WDL_TypedBuf<sample>> mBypassFadeWetBuffers;
+  std::vector<WDL_TypedBuf<sample>> mBypassFadeDryBuffers;
+  bool mBypassFadeActive = false;
+  bool mBypassFadeToDry = false;
+  int mBypassFadePos = 0;
+  int mBypassFadeLength = 0;
 };
 
 IPlugAAX* MakePlug(const InstanceInfo& info);

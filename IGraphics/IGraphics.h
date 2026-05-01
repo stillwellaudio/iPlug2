@@ -1124,9 +1124,25 @@ public:
   * @return The scale factor of the screen/display on which this graphics context is currently located */
   int GetRoundedScreenScale() const { return static_cast<int>(std::ceil(GetScreenScale())); }
 
+  /** Gets the effective raster asset scale, rounded up.
+   * This is used for bitmap source selection and combines monitor DPI with manual UI draw scaling. */
+  int GetRoundedBitmapScale() const { return static_cast<int>(std::ceil(GetTotalScale())); }
+
+  /** Starts a drag resize initiated by a regular control in the normal control stack. */
+  void StartControlDragResize() { mResizingInProcess = true; mResizeIsShiftDragging = false; }
+
+  /** Applies a committed draw scale change from a regular control after drag resize has finished. */
+  void ApplyControlDrawScale(float scale) { StartControlDragResize(); Resize(Width(), Height(), scale); EndDragResize(); }
+
+  /** Queues a draw scale change to be committed after the current drag resize ends. */
+  void QueueControlDrawScale(float scale) { mPendingControlDrawScale = scale; }
+
   /** Gets the combined draw and screen/display scaling factor
   * @return The draw scale * screen scale */
   float GetTotalScale() const { return mDrawScale * mScreenScale; }
+
+  /** @return true if the active drag resize currently has Shift held down. */
+  bool GetResizeIsShiftDragging() const { return mResizeIsShiftDragging; }
 
   /** Gets the nearest backing pixel aligned rect to the input IRECT
     * @param r The IRECT to snap
@@ -1263,7 +1279,7 @@ private:
   void DoCreatePopupMenu(IControl& control, IPopupMenu& menu, const IRECT& bounds, int valIdx, bool isContext);
   
   /** Called by ICornerResizer when drag resize commences */
-  void StartDragResize() { mResizingInProcess = true; }
+  void StartDragResize() { mResizingInProcess = true; mResizeIsShiftDragging = false; }
   
   /** Called when drag resize ends */
   void EndDragResize();
@@ -1856,6 +1872,8 @@ private:
   bool mLayoutOnResize = false;
   bool mEnableMultiTouch = false;
   EUIResizerMode mGUISizeMode = EUIResizerMode::Scale;
+  float mPendingControlDrawScale = 0.f;
+  bool mResizeIsShiftDragging = false;
   double mPrevTimestamp = 0.;
   IKeyHandlerFunc mKeyHandlerFunc = nullptr;
   IDisplayTickFunc mDisplayTickFunc = nullptr;

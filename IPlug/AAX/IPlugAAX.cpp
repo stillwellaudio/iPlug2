@@ -24,6 +24,14 @@
 
 using namespace iplug;
 
+namespace
+{
+  // Keep the AAX bypass overlap very short. A long overlap reduces clicks,
+  // but can expose audible cancellation when the processed and dry paths are
+  // close in level yet not sample-identical.
+  constexpr int kAAXBypassFadeSamples = 64;
+}
+
 AAX_CEffectParameters *AAX_CALLBACK IPlugAAX::Create()
 {
   return MakePlug(InstanceInfo());
@@ -110,6 +118,7 @@ IPlugAAX::IPlugAAX(const InstanceInfo& info, const Config& config)
   
   SetBlockSize(DEFAULT_BLOCK_SIZE);
   InitLatencyDelay();
+  ResizeBypassFadeBuffers(GetBlockSize());
 
   mMaxNChansForMainInputBus = MaxNChannelsForBus(kInput, 0);
   
@@ -257,6 +266,8 @@ AAX_Result IPlugAAX::UpdateParameterNormalizedValue(AAX_CParamID paramID, double
 void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPair* inSynchronizedParamValues[], int32_t inNumSynchronizedParamValues)
 {
   TRACE
+  (void) inSynchronizedParamValues;
+  (void) inNumSynchronizedParamValues;
 
   // Get bypass parameter value
   bool bypass;
@@ -291,6 +302,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   if (numSamples > GetBlockSize())
   {
     SetBlockSize(numSamples);
+    ResizeBypassFadeBuffers(numSamples);
     OnReset();
   }
 
@@ -303,9 +315,12 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
 
     if (sideChainChannel)
     {
-      SetChannelConnections(ERoute::kInput, mMaxNChansForMainInputBus, 1, true);
+      // Fix: Attach sidechain to channel immediately after main inputs (numInChannels),
+      // not at mMaxNChansForMainInputBus which may be larger due to other I/O configs.
+      // See: docs/iPlug2-AAX-Sidechain-Bug.md for upstream issue details.
+      SetChannelConnections(ERoute::kInput, numInChannels, 1, true);
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
-      AttachBuffers(ERoute::kInput, mMaxNChansForMainInputBus, 1, pRenderInfo->mAudioInputs + sideChainChannel, numSamples);
+      AttachBuffers(ERoute::kInput, numInChannels, 1, pRenderInfo->mAudioInputs + sideChainChannel, numSamples);
     }
     else
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
@@ -324,11 +339,178 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   {
     AttachBuffers(ERoute::kOutput, 0, maxNOutChans, pRenderInfo->mAudioOutputs, numSamples);
   }
+
+  const bool handlesHostBypassInternally = HandlesHostBypassInternally();
+  const bool previousBypassed = GetBypassed();
+  const bool bypassChanged = (bypass != previousBypassed);
+
+  if (bypassChanged)
+  {
+    OnHostBypassChanged(bypass);
+
+    if (handlesHostBypassInternally)
+    {
+      SetBypassed(bypass);
+      mBypassFadeActive = false;
+      mBypassFadePos = 0;
+    }
+    else
+    {
+      mBypassFadeActive = true;
+      mBypassFadeToDry = bypass;
+      mBypassFadePos = 0;
+      const int fadeLength = static_cast<int>(GetSampleRate() * 0.01);
+      mBypassFadeLength = fadeLength > 0 ? fadeLength : 1;
+    }
+  }
+
+  const bool bypassFadeActive = mBypassFadeActive && !handlesHostBypassInternally;
   
-  if (bypass) {
+  if (bypassFadeActive)
+  {
+    int32_t num, denom;
+    int64_t ppqPos, samplePos, cStart, cEnd;
+    ITimeInfo timeInfo;
+
+    mTransport->GetCurrentTempo(&timeInfo.mTempo);
+    mTransport->IsTransportPlaying(&timeInfo.mTransportIsRunning);
+
+    mTransport->GetCurrentMeter(&num, &denom);
+    timeInfo.mNumerator = (int) num;
+    timeInfo.mDenominator = (int) denom;
+
+    mTransport->GetCurrentTickPosition(&ppqPos);
+    timeInfo.mPPQPos = (double) ppqPos / 960000.0;
+
+    if(timeInfo.mPPQPos < 0)
+      timeInfo.mPPQPos = 0;
+
+    mTransport->GetCurrentNativeSampleLocation(&samplePos);
+    timeInfo.mSamplePos = (double) samplePos;
+
+    mTransport->GetCurrentLoopPosition(&timeInfo.mTransportLoopEnabled, &cStart, &cEnd);
+    timeInfo.mCycleStart = (double) cStart / 960000.0;
+    timeInfo.mCycleEnd = (double) cEnd / 960000.0;
+
+    SetTimeInfo(timeInfo);
+
+    IMidiMsg msg;
+
+    while (mMidiMsgsFromEditor.Pop(msg))
+    {
+      ProcessMidiMsg(msg);
+    }
+
     mMeterLevelIn = GetInputBufferMaxValue(pRenderInfo, numSamples);
     mMeterLevelGR = 0.;
+
+    ENTER_PARAMS_MUTEX
+
+    auto copyWetScratch = [&]()
+    {
+      for (int ch = 0; ch < maxNOutChans; ++ch)
+      {
+        if (IsChannelConnected(ERoute::kOutput, ch))
+        {
+          memcpy(mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get(),
+                 GetScratchData(ERoute::kOutput)[ch],
+                 numSamples * sizeof(sample));
+        }
+      }
+    };
+
+    auto copyDryScratch = [&]()
+    {
+      for (int ch = 0; ch < maxNOutChans; ++ch)
+      {
+        if (IsChannelConnected(ERoute::kOutput, ch))
+        {
+          memcpy(mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get(),
+                 GetScratchData(ERoute::kOutput)[ch],
+                 numSamples * sizeof(sample));
+        }
+      }
+    };
+
+    // Render the "from" state first, then flip to the target state before
+    // capturing the destination side of the transition.
+    if (bypassChanged && bypass)
+    {
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+
+      SetBypassed(true);
+      ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
+    }
+    else if (bypassChanged && !bypass)
+    {
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
+
+      SetBypassed(false);
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+    }
+    else
+    {
+      ProcessBuffers((sample) 0.0, numSamples);
+      copyWetScratch();
+
+      if (bypass)
+        ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+
+      PassThroughBuffers((sample) 0.0, numSamples);
+      copyDryScratch();
+    }
+
+    LEAVE_PARAMS_MUTEX
+
+    for (int ch = 0; ch < maxNOutChans; ++ch)
+    {
+      if (!IsChannelConnected(ERoute::kOutput, ch))
+        continue;
+
+      float* dest = pRenderInfo->mAudioOutputs[ch];
+      sample* wet = mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get();
+      sample* dry = mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get();
+
+      for (int s = 0; s < numSamples; ++s)
+      {
+        double t = static_cast<double>(mBypassFadePos + s) / static_cast<double>(mBypassFadeLength);
+        if (t > 1.0)
+          t = 1.0;
+
+        const double dryMix = mBypassFadeToDry ? t : (1.0 - t);
+        const double wetMix = 1.0 - dryMix;
+        dest[s] = static_cast<sample>(wet[s] * wetMix + dry[s] * dryMix);
+      }
+    }
+
+    mBypassFadePos += numSamples;
+    if (mBypassFadePos >= mBypassFadeLength)
+    {
+      mBypassFadeActive = false;
+      mBypassFadePos = 0;
+    }
+
+    mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
+    *pRenderInfo->mMeters[0] = fmax(mMeterLevelIn, *pRenderInfo->mMeters[0]);
+    *pRenderInfo->mMeters[1] = fmax(mMeterLevelOut, *pRenderInfo->mMeters[1]);
+    if(strcmp(AAX_PLUG_CATEGORY_STR, "Dynamics") == 0)
+      *pRenderInfo->mMeters[2] = fmax(mMeterLevelGR, *pRenderInfo->mMeters[2]);
+  }
+  else if (bypass && !handlesHostBypassInternally) {
+    if (!previousBypassed)
+      SetBypassed(true);
+
+    mMeterLevelIn = GetInputBufferMaxValue(pRenderInfo, numSamples);
+    mMeterLevelGR = 0.;
+    ENTER_PARAMS_MUTEX
+    ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
     PassThroughBuffers(0.0f, numSamples);
+    LEAVE_PARAMS_MUTEX
     mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
     *pRenderInfo->mMeters[0] = fmax(mMeterLevelIn, *pRenderInfo->mMeters[0]);
     *pRenderInfo->mMeters[1] = fmax(mMeterLevelOut, *pRenderInfo->mMeters[1]);
@@ -337,6 +519,9 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   }
   else 
   {
+    if (!handlesHostBypassInternally && previousBypassed)
+      SetBypassed(false);
+
     int32_t num, denom;
     int64_t ppqPos, samplePos, cStart, cEnd;
     ITimeInfo timeInfo;
@@ -375,6 +560,9 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     mMeterLevelGR = 0.;
     ENTER_PARAMS_MUTEX
     ProcessBuffers(0.0f, numSamples);
+    // Keep the dry latency line in sync while the wet path is active so
+    // host-driven wet/dry bypass fades do not pick up stale delayed input.
+    PassThroughBuffers(PLUG_SAMPLE_DST(0.), numSamples);
     LEAVE_PARAMS_MUTEX
     mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
     *pRenderInfo->mMeters[0] = fmax(mMeterLevelIn, *pRenderInfo->mMeters[0]);
@@ -629,6 +817,23 @@ bool IPlugAAX::SendMidiMsg(const IMidiMsg& msg)
 {
   mMidiOutputQueue.Add(msg);
   return true;
+}
+
+void IPlugAAX::ResizeBypassFadeBuffers(int blockSize)
+{
+  const int nOut = MaxNChannels(ERoute::kOutput);
+
+  mBypassFadeWetBuffers.resize(static_cast<size_t>(nOut));
+  mBypassFadeDryBuffers.resize(static_cast<size_t>(nOut));
+
+  for (int ch = 0; ch < nOut; ++ch)
+  {
+    mBypassFadeWetBuffers[static_cast<size_t>(ch)].Resize(blockSize);
+    memset(mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get(), 0, blockSize * sizeof(sample));
+
+    mBypassFadeDryBuffers[static_cast<size_t>(ch)].Resize(blockSize);
+    memset(mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get(), 0, blockSize * sizeof(sample));
+  }
 }
 
 double IPlugAAX::GetInputBufferMaxValue (AAX_SIPlugRenderInfo* pRenderInfo, int nFrames)

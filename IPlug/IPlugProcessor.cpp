@@ -88,6 +88,12 @@ void IPlugProcessor::ProcessBlock(sample** inputs, sample** outputs, int nFrames
   }
 }
 
+void IPlugProcessor::ProcessWhileBypassed(sample** inputs, int nFrames)
+{
+  (void) inputs;
+  (void) nFrames;
+}
+
 void IPlugProcessor::ProcessMidiMsg(const IMidiMsg& msg)
 {
   SendMidiMsg(msg);
