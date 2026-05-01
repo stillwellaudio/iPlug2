@@ -95,7 +95,9 @@ private:
   void HandleXdndEnter(const XClientMessageEvent& event);
   void HandleXdndPosition(const XClientMessageEvent& event);
   void HandleXdndDrop(const XClientMessageEvent& event);
+  void HandleXdndLeave(const XClientMessageEvent& event);
   void HandleXdndSelectionNotify(const XSelectionEvent& event);
+  void RestoreParentXdndProperties();
 };
 
 END_IGRAPHICS_NAMESPACE

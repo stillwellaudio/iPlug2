@@ -171,6 +171,25 @@ static bool WindowTypeListHasAtom(Display* display, ::Window source, Atom typeLi
   return found;
 }
 
+static bool ReadSingleLongProperty(Display* display, ::Window window, Atom property, long& value, Atom& actualType, int& actualFormat)
+{
+  unsigned long itemCount = 0;
+  unsigned long bytesAfter = 0;
+  unsigned char* data = nullptr;
+
+  const int result = XGetWindowProperty(display, window, property, 0, 1, False, AnyPropertyType,
+                                        &actualType, &actualFormat, &itemCount, &bytesAfter, &data);
+  if (result != Success || !data)
+    return false;
+
+  const bool valid = itemCount == 1 && actualFormat == 32;
+  if (valid)
+    value = reinterpret_cast<long*>(data)[0];
+
+  XFree(data);
+  return valid;
+}
+
 static int HexNibble(char c)
 {
   if (c >= '0' && c <= '9') return c - '0';
@@ -261,14 +280,25 @@ public:
   Atom mXdndTypeList = 0;
   Atom mXdndActionCopy = 0;
   Atom mXdndDrop = 0;
+  Atom mXdndLeave = 0;
   Atom mXdndFinished = 0;
+  Atom mXdndProxy = 0;
   Atom mXdndSelection = 0;
   Atom mTextUriList = 0;
   Atom mIPlugXdndProperty = 0;
   ::Window mXdndSource = 0;
+  ::Window mXdndTarget = 0;
   bool mXdndAcceptsUriList = false;
   float mXdndDropX = 0.f;
   float mXdndDropY = 0.f;
+  bool mParentHadXdndAware = false;
+  bool mParentHadXdndProxy = false;
+  long mParentXdndAwareValue = 0;
+  long mParentXdndProxyValue = 0;
+  Atom mParentXdndAwareType = 0;
+  Atom mParentXdndProxyType = 0;
+  int mParentXdndAwareFormat = 0;
+  int mParentXdndProxyFormat = 0;
   
   sk_sp<GrDirectContext> mGrContext;
   
@@ -364,7 +394,9 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   mImpl->mXdndTypeList = XInternAtom(mImpl->mDisplay, "XdndTypeList", False);
   mImpl->mXdndActionCopy = XInternAtom(mImpl->mDisplay, "XdndActionCopy", False);
   mImpl->mXdndDrop = XInternAtom(mImpl->mDisplay, "XdndDrop", False);
+  mImpl->mXdndLeave = XInternAtom(mImpl->mDisplay, "XdndLeave", False);
   mImpl->mXdndFinished = XInternAtom(mImpl->mDisplay, "XdndFinished", False);
+  mImpl->mXdndProxy = XInternAtom(mImpl->mDisplay, "XdndProxy", False);
   mImpl->mXdndSelection = XInternAtom(mImpl->mDisplay, "XdndSelection", False);
   mImpl->mTextUriList = XInternAtom(mImpl->mDisplay, "text/uri-list", False);
   mImpl->mIPlugXdndProperty = XInternAtom(mImpl->mDisplay, "IPLUG_XDND_SELECTION", False);
@@ -373,6 +405,27 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   XChangeProperty(mImpl->mDisplay, mImpl->mWindow, mImpl->mXdndAware,
                   XA_ATOM, 32, PropModeReplace,
                   reinterpret_cast<unsigned char*>(&xdndVersion), 1);
+  long xdndProxyWindow = static_cast<long>(mImpl->mWindow);
+  XChangeProperty(mImpl->mDisplay, mImpl->mWindow, mImpl->mXdndProxy,
+                  XA_WINDOW, 32, PropModeReplace,
+                  reinterpret_cast<unsigned char*>(&xdndProxyWindow), 1);
+
+  if (mImpl->mParentWindow)
+  {
+    mImpl->mParentHadXdndAware = ReadSingleLongProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
+                                                        mImpl->mParentXdndAwareValue, mImpl->mParentXdndAwareType,
+                                                        mImpl->mParentXdndAwareFormat);
+    mImpl->mParentHadXdndProxy = ReadSingleLongProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
+                                                        mImpl->mParentXdndProxyValue, mImpl->mParentXdndProxyType,
+                                                        mImpl->mParentXdndProxyFormat);
+
+    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
+                    XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&xdndVersion), 1);
+    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
+                    XA_WINDOW, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&xdndProxyWindow), 1);
+  }
 
   XSetLocaleModifiers("");
   mImpl->mInputMethod = XOpenIM(mImpl->mDisplay, nullptr, nullptr, nullptr);
@@ -448,6 +501,8 @@ void IGraphicsLinux::CloseWindow() {
     }
     
     if (mImpl->mWindow) {
+      RestoreParentXdndProperties();
+
       if (mImpl->mInputContext) {
         XDestroyIC(mImpl->mInputContext);
         mImpl->mInputContext = nullptr;
@@ -504,7 +559,24 @@ bool IGraphicsLinux::PlatformProcessEvents() {
 bool IGraphicsLinux::HandleXEvent(const XEvent& event)
 {
   if (event.xany.window != mImpl->mWindow)
+  {
+    if (event.type == ClientMessage &&
+        (event.xclient.message_type == mImpl->mXdndEnter ||
+         event.xclient.message_type == mImpl->mXdndPosition ||
+         event.xclient.message_type == mImpl->mXdndDrop ||
+         event.xclient.message_type == mImpl->mXdndLeave))
+    {
+      if (event.xclient.message_type == mImpl->mXdndEnter)
+        HandleXdndEnter(event.xclient);
+      else if (event.xclient.message_type == mImpl->mXdndPosition)
+        HandleXdndPosition(event.xclient);
+      else if (event.xclient.message_type == mImpl->mXdndDrop)
+        HandleXdndDrop(event.xclient);
+      else if (event.xclient.message_type == mImpl->mXdndLeave)
+        HandleXdndLeave(event.xclient);
+    }
     return true;
+  }
 
   switch (event.type) {
     case Expose:
@@ -673,6 +745,10 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         HandleXdndDrop(event.xclient);
         break;
       }
+      if (event.xclient.message_type == mImpl->mXdndLeave) {
+        HandleXdndLeave(event.xclient);
+        break;
+      }
       if ((Atom)event.xclient.data.l[0] == mImpl->mWmDeleteMessage) {
         CloseWindow();
         return false;
@@ -719,6 +795,7 @@ void IGraphicsLinux::HandleSelectionRequest(const XSelectionRequestEvent& event)
 void IGraphicsLinux::HandleXdndEnter(const XClientMessageEvent& event)
 {
   mImpl->mXdndSource = static_cast<::Window>(event.data.l[0]);
+  mImpl->mXdndTarget = event.window ? event.window : mImpl->mWindow;
   const bool hasMoreTypes = (event.data.l[1] & 1) != 0;
   mImpl->mXdndAcceptsUriList = false;
 
@@ -739,6 +816,8 @@ void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
     return;
 
   mImpl->mXdndSource = static_cast<::Window>(event.data.l[0]);
+  if (event.window)
+    mImpl->mXdndTarget = event.window;
 
   const int rootX = static_cast<int>((event.data.l[2] >> 16) & 0xffff);
   const int rootY = static_cast<int>(event.data.l[2] & 0xffff);
@@ -759,7 +838,7 @@ void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
   reply.window = mImpl->mXdndSource;
   reply.message_type = mImpl->mXdndStatus;
   reply.format = 32;
-  reply.data.l[0] = mImpl->mWindow;
+  reply.data.l[0] = mImpl->mXdndTarget ? mImpl->mXdndTarget : mImpl->mWindow;
   reply.data.l[1] = mImpl->mXdndAcceptsUriList ? 1 : 0;
   reply.data.l[2] = 0;
   reply.data.l[3] = 0;
@@ -779,7 +858,7 @@ void IGraphicsLinux::HandleXdndDrop(const XClientMessageEvent& event)
     finished.window = mImpl->mXdndSource;
     finished.message_type = mImpl->mXdndFinished;
     finished.format = 32;
-    finished.data.l[0] = mImpl->mWindow;
+    finished.data.l[0] = mImpl->mXdndTarget ? mImpl->mXdndTarget : mImpl->mWindow;
     finished.data.l[1] = 0;
     finished.data.l[2] = X11_None;
     XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&finished));
@@ -791,6 +870,16 @@ void IGraphicsLinux::HandleXdndDrop(const XClientMessageEvent& event)
                     mImpl->mIPlugXdndProperty, mImpl->mWindow,
                     static_cast<Time>(event.data.l[2]));
   XFlush(mImpl->mDisplay);
+}
+
+void IGraphicsLinux::HandleXdndLeave(const XClientMessageEvent& event)
+{
+  if (static_cast<::Window>(event.data.l[0]) != mImpl->mXdndSource)
+    return;
+
+  mImpl->mXdndSource = 0;
+  mImpl->mXdndTarget = 0;
+  mImpl->mXdndAcceptsUriList = false;
 }
 
 void IGraphicsLinux::HandleXdndSelectionNotify(const XSelectionEvent& event)
@@ -839,11 +928,47 @@ void IGraphicsLinux::HandleXdndSelectionNotify(const XSelectionEvent& event)
   finished.window = mImpl->mXdndSource;
   finished.message_type = mImpl->mXdndFinished;
   finished.format = 32;
-  finished.data.l[0] = mImpl->mWindow;
+  finished.data.l[0] = mImpl->mXdndTarget ? mImpl->mXdndTarget : mImpl->mWindow;
   finished.data.l[1] = success ? 1 : 0;
   finished.data.l[2] = success ? mImpl->mXdndActionCopy : X11_None;
   XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&finished));
   XFlush(mImpl->mDisplay);
+}
+
+void IGraphicsLinux::RestoreParentXdndProperties()
+{
+  if (!mImpl->mDisplay || !mImpl->mParentWindow)
+    return;
+
+  if (mImpl->mParentHadXdndAware)
+  {
+    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware,
+                    mImpl->mParentXdndAwareType, mImpl->mParentXdndAwareFormat,
+                    PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&mImpl->mParentXdndAwareValue), 1);
+  }
+  else
+  {
+    XDeleteProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndAware);
+  }
+
+  if (mImpl->mParentHadXdndProxy)
+  {
+    XChangeProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy,
+                    mImpl->mParentXdndProxyType, mImpl->mParentXdndProxyFormat,
+                    PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&mImpl->mParentXdndProxyValue), 1);
+  }
+  else
+  {
+    XDeleteProperty(mImpl->mDisplay, mImpl->mParentWindow, mImpl->mXdndProxy);
+  }
+
+  XFlush(mImpl->mDisplay);
+
+  mImpl->mParentWindow = 0;
+  mImpl->mParentHadXdndAware = false;
+  mImpl->mParentHadXdndProxy = false;
 }
 
 void IGraphicsLinux::GetMouseLocation(float& x, float& y) const {
