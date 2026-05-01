@@ -62,9 +62,9 @@ public:
   bool PromptForColor(IColor& color, const char* str = "", IColorPickerHandlerFunc func = nullptr) override { return false; }
   bool OpenURL(const char* url, const char* msgWindowTitle, const char* confirmMsg, const char* errMsgOnFailure) override { return false; }
   
-  // Clipboard (Stubs)
-  bool GetTextFromClipboard(WDL_String& str) override { return false; }
-  bool SetTextInClipboard(const char* str) override { return false; }
+  // Clipboard
+  bool GetTextFromClipboard(WDL_String& str) override;
+  bool SetTextInClipboard(const char* str) override;
   
   // Platform Controls (Stubs)
   IPopupMenu* CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT bounds, bool& isAsync) override { return nullptr; }
@@ -90,6 +90,12 @@ private:
   std::unique_ptr<Timer> mTimer;
   
   void OnDisplayTimer();
+  bool HandleXEvent(const XEvent& event);
+  void HandleSelectionRequest(const XSelectionRequestEvent& event);
+  void HandleXdndEnter(const XClientMessageEvent& event);
+  void HandleXdndPosition(const XClientMessageEvent& event);
+  void HandleXdndDrop(const XClientMessageEvent& event);
+  void HandleXdndSelectionNotify(const XSelectionEvent& event);
 };
 
 END_IGRAPHICS_NAMESPACE

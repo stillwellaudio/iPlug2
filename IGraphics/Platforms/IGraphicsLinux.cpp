@@ -17,6 +17,7 @@
 
 // Include X11/GLX headers AFTER GLAD is definitely loaded
 // GLX includes GL, but GLAD has already defined __gl_h_, so GL should be skipped
+#include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 // Define GLX_GLXEXT_LEGACY before including glx.h to prevent some issues
 #define GLX_GLXEXT_LEGACY
@@ -32,29 +33,210 @@ static constexpr long X11_None = 0L;
 #include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "include/gpu/ganesh/gl/GrGLDirectContext.h"  // Defines GrDirectContexts namespace
 
+#include <cstring>
+#include <string>
+#include <vector>
+#include <unistd.h>
+
 using namespace iplug;
 using namespace iplug::igraphics;
 
 // --- Key Mapping Helper ---
-static IKeyPress XKeyToKeyPress(KeySym keysym) {
-  int vk = 0;
-  switch (keysym) {
-    case XK_Return: vk = kVK_RETURN; break;
-    case XK_Escape: vk = kVK_ESCAPE; break;
-    case XK_BackSpace: vk = kVK_BACK; break;
-    case XK_Tab: vk = kVK_TAB; break;
-    case XK_Left: vk = kVK_LEFT; break;
-    case XK_Right: vk = kVK_RIGHT; break;
-    case XK_Up: vk = kVK_UP; break;
-    case XK_Down: vk = kVK_DOWN; break;
-    case XK_Shift_L: case XK_Shift_R: vk = kVK_SHIFT; break;
-    case XK_Control_L: case XK_Control_R: vk = kVK_CONTROL; break;
+static void XStateToModifiers(unsigned int state, bool& shift, bool& control, bool& alt)
+{
+  shift = (state & ShiftMask) != 0;
+  control = (state & ControlMask) != 0;
+  alt = (state & Mod1Mask) != 0;
+}
+
+static int XKeySymToVK(KeySym keysym)
+{
+  switch (keysym)
+  {
+    case XK_Return:
+    case XK_KP_Enter: return kVK_RETURN;
+    case XK_Escape: return kVK_ESCAPE;
+    case XK_BackSpace: return kVK_BACK;
+    case XK_Tab: return kVK_TAB;
+    case XK_Delete: return kVK_DELETE;
+    case XK_Left: return kVK_LEFT;
+    case XK_Right: return kVK_RIGHT;
+    case XK_Up: return kVK_UP;
+    case XK_Down: return kVK_DOWN;
+    case XK_Page_Up: return kVK_PRIOR;
+    case XK_Page_Down: return kVK_NEXT;
+    case XK_Home: return kVK_HOME;
+    case XK_End: return kVK_END;
+    case XK_space: return kVK_SPACE;
+    case XK_Shift_L:
+    case XK_Shift_R: return kVK_SHIFT;
+    case XK_Control_L:
+    case XK_Control_R: return kVK_CONTROL;
+    case XK_Alt_L:
+    case XK_Alt_R:
+    case XK_Meta_L:
+    case XK_Meta_R: return kVK_MENU;
+    case XK_KP_0: return kVK_NUMPAD0;
+    case XK_KP_1: return kVK_NUMPAD1;
+    case XK_KP_2: return kVK_NUMPAD2;
+    case XK_KP_3: return kVK_NUMPAD3;
+    case XK_KP_4: return kVK_NUMPAD4;
+    case XK_KP_5: return kVK_NUMPAD5;
+    case XK_KP_6: return kVK_NUMPAD6;
+    case XK_KP_7: return kVK_NUMPAD7;
+    case XK_KP_8: return kVK_NUMPAD8;
+    case XK_KP_9: return kVK_NUMPAD9;
     default:
-      if (keysym >= XK_a && keysym <= XK_z) vk = keysym - 32;
-      else if (keysym >= XK_0 && keysym <= XK_9) vk = keysym;
-      break;
+      if (keysym >= XK_a && keysym <= XK_z)
+        return static_cast<int>('A' + (keysym - XK_a));
+      if (keysym >= XK_A && keysym <= XK_Z)
+        return static_cast<int>(keysym);
+      if (keysym >= XK_0 && keysym <= XK_9)
+        return static_cast<int>(keysym);
+      return kVK_NONE;
   }
-  return IKeyPress("", vk);
+}
+
+static IKeyPress XKeyEventToKeyPress(XIC inputContext, XKeyEvent* event)
+{
+  char utf8[5] = { 0 };
+  char buffer[32] = { 0 };
+  KeySym keysym = NoSymbol;
+  Status status = 0;
+
+  int len = 0;
+  if (inputContext)
+  {
+    len = Xutf8LookupString(inputContext, event, buffer, sizeof(buffer) - 1, &keysym, &status);
+    if (status == XBufferOverflow)
+      len = 0;
+  }
+  else
+  {
+    len = XLookupString(event, buffer, sizeof(buffer) - 1, &keysym, nullptr);
+  }
+
+  if (len > 0)
+  {
+    buffer[len] = '\0';
+    strncpy(utf8, buffer, sizeof(utf8) - 1);
+  }
+
+  if (keysym == NoSymbol)
+    keysym = XLookupKeysym(event, 0);
+
+  bool shift = false;
+  bool control = false;
+  bool alt = false;
+  XStateToModifiers(event->state, shift, control, alt);
+
+  return IKeyPress(utf8, XKeySymToVK(keysym), shift, control, alt);
+}
+
+static bool XdndMessageHasUriList(const XClientMessageEvent& msg, Atom textUriList)
+{
+  return static_cast<Atom>(msg.data.l[2]) == textUriList ||
+         static_cast<Atom>(msg.data.l[3]) == textUriList ||
+         static_cast<Atom>(msg.data.l[4]) == textUriList;
+}
+
+static bool WindowTypeListHasAtom(Display* display, ::Window source, Atom typeListAtom, Atom wantedAtom)
+{
+  Atom actualType = 0;
+  int actualFormat = 0;
+  unsigned long itemCount = 0;
+  unsigned long bytesAfter = 0;
+  unsigned char* data = nullptr;
+
+  const int result = XGetWindowProperty(display, source, typeListAtom, 0, 1024, False, XA_ATOM,
+                                        &actualType, &actualFormat, &itemCount, &bytesAfter, &data);
+  if (result != Success || !data)
+    return false;
+
+  bool found = false;
+  if (actualType == XA_ATOM && actualFormat == 32)
+  {
+    Atom* atoms = reinterpret_cast<Atom*>(data);
+    for (unsigned long i = 0; i < itemCount; ++i)
+    {
+      if (atoms[i] == wantedAtom)
+      {
+        found = true;
+        break;
+      }
+    }
+  }
+
+  XFree(data);
+  return found;
+}
+
+static int HexNibble(char c)
+{
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+  if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+  return -1;
+}
+
+static std::string PercentDecode(const std::string& input)
+{
+  std::string output;
+  output.reserve(input.size());
+
+  for (size_t i = 0; i < input.size(); ++i)
+  {
+    if (input[i] == '%' && i + 2 < input.size())
+    {
+      const int hi = HexNibble(input[i + 1]);
+      const int lo = HexNibble(input[i + 2]);
+      if (hi >= 0 && lo >= 0)
+      {
+        output.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+        continue;
+      }
+    }
+
+    output.push_back(input[i]);
+  }
+
+  return output;
+}
+
+static std::vector<std::string> ParseTextUriList(const char* data)
+{
+  std::vector<std::string> paths;
+  if (!data)
+    return paths;
+
+  std::string text(data);
+  size_t start = 0;
+  while (start < text.size())
+  {
+    size_t end = text.find_first_of("\r\n", start);
+    if (end == std::string::npos)
+      end = text.size();
+
+    std::string line = text.substr(start, end - start);
+    if (!line.empty() && line[0] != '#')
+    {
+      const char prefix[] = "file://";
+      if (line.compare(0, strlen(prefix), prefix) == 0)
+      {
+        std::string path = line.substr(strlen(prefix));
+        if (path.compare(0, 10, "localhost/") == 0)
+          path.erase(0, 9);
+        paths.push_back(PercentDecode(path));
+      }
+    }
+
+    start = end + 1;
+    while (start < text.size() && (text[start] == '\r' || text[start] == '\n'))
+      ++start;
+  }
+
+  return paths;
 }
 
 class IGraphicsLinux::Impl {
@@ -63,7 +245,30 @@ public:
   ::Window mWindow = 0;  // Use global namespace Window to avoid X11 conflicts
   ::Window mParentWindow = 0;
   GLXContext mGLContext = nullptr;
-  Atom mWmDeleteMessage;
+  Atom mWmDeleteMessage = 0;
+  XIM mInputMethod = nullptr;
+  XIC mInputContext = nullptr;
+  Atom mClipboardAtom = 0;
+  Atom mUtf8StringAtom = 0;
+  Atom mTargetsAtom = 0;
+  Atom mTextAtom = 0;
+  Atom mIPlugClipboardAtom = 0;
+  WDL_String mClipboardText;
+  Atom mXdndAware = 0;
+  Atom mXdndEnter = 0;
+  Atom mXdndPosition = 0;
+  Atom mXdndStatus = 0;
+  Atom mXdndTypeList = 0;
+  Atom mXdndActionCopy = 0;
+  Atom mXdndDrop = 0;
+  Atom mXdndFinished = 0;
+  Atom mXdndSelection = 0;
+  Atom mTextUriList = 0;
+  Atom mIPlugXdndProperty = 0;
+  ::Window mXdndSource = 0;
+  bool mXdndAcceptsUriList = false;
+  float mXdndDropX = 0.f;
+  float mXdndDropY = 0.f;
   
   sk_sp<GrDirectContext> mGrContext;
   
@@ -127,7 +332,8 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
   swa.colormap = cmap;
   swa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | 
                    ButtonPressMask | ButtonReleaseMask | 
-                   PointerMotionMask | StructureNotifyMask;
+                   PointerMotionMask | StructureNotifyMask |
+                   FocusChangeMask;
 
   mImpl->mParentWindow = (::Window)pParent;
 
@@ -144,6 +350,39 @@ void* IGraphicsLinux::OpenWindow(void* pParent) {
     
     mImpl->mWmDeleteMessage = XInternAtom(mImpl->mDisplay, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(mImpl->mDisplay, mImpl->mWindow, &mImpl->mWmDeleteMessage, 1);
+  }
+
+  mImpl->mClipboardAtom = XInternAtom(mImpl->mDisplay, "CLIPBOARD", False);
+  mImpl->mUtf8StringAtom = XInternAtom(mImpl->mDisplay, "UTF8_STRING", False);
+  mImpl->mTargetsAtom = XInternAtom(mImpl->mDisplay, "TARGETS", False);
+  mImpl->mTextAtom = XInternAtom(mImpl->mDisplay, "TEXT", False);
+  mImpl->mIPlugClipboardAtom = XInternAtom(mImpl->mDisplay, "IPLUG_CLIPBOARD", False);
+  mImpl->mXdndAware = XInternAtom(mImpl->mDisplay, "XdndAware", False);
+  mImpl->mXdndEnter = XInternAtom(mImpl->mDisplay, "XdndEnter", False);
+  mImpl->mXdndPosition = XInternAtom(mImpl->mDisplay, "XdndPosition", False);
+  mImpl->mXdndStatus = XInternAtom(mImpl->mDisplay, "XdndStatus", False);
+  mImpl->mXdndTypeList = XInternAtom(mImpl->mDisplay, "XdndTypeList", False);
+  mImpl->mXdndActionCopy = XInternAtom(mImpl->mDisplay, "XdndActionCopy", False);
+  mImpl->mXdndDrop = XInternAtom(mImpl->mDisplay, "XdndDrop", False);
+  mImpl->mXdndFinished = XInternAtom(mImpl->mDisplay, "XdndFinished", False);
+  mImpl->mXdndSelection = XInternAtom(mImpl->mDisplay, "XdndSelection", False);
+  mImpl->mTextUriList = XInternAtom(mImpl->mDisplay, "text/uri-list", False);
+  mImpl->mIPlugXdndProperty = XInternAtom(mImpl->mDisplay, "IPLUG_XDND_SELECTION", False);
+
+  long xdndVersion = 5;
+  XChangeProperty(mImpl->mDisplay, mImpl->mWindow, mImpl->mXdndAware,
+                  XA_ATOM, 32, PropModeReplace,
+                  reinterpret_cast<unsigned char*>(&xdndVersion), 1);
+
+  XSetLocaleModifiers("");
+  mImpl->mInputMethod = XOpenIM(mImpl->mDisplay, nullptr, nullptr, nullptr);
+  if (mImpl->mInputMethod)
+  {
+    mImpl->mInputContext = XCreateIC(mImpl->mInputMethod,
+                                     XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+                                     XNClientWindow, mImpl->mWindow,
+                                     XNFocusWindow, mImpl->mWindow,
+                                     nullptr);
   }
 
   XMapWindow(mImpl->mDisplay, mImpl->mWindow);
@@ -209,6 +448,16 @@ void IGraphicsLinux::CloseWindow() {
     }
     
     if (mImpl->mWindow) {
+      if (mImpl->mInputContext) {
+        XDestroyIC(mImpl->mInputContext);
+        mImpl->mInputContext = nullptr;
+      }
+
+      if (mImpl->mInputMethod) {
+        XCloseIM(mImpl->mInputMethod);
+        mImpl->mInputMethod = nullptr;
+      }
+
       XDestroyWindow(mImpl->mDisplay, mImpl->mWindow);
       mImpl->mWindow = 0;
     }
@@ -245,148 +494,356 @@ bool IGraphicsLinux::PlatformProcessEvents() {
   while (XPending(mImpl->mDisplay) > 0) {
     XEvent event;
     XNextEvent(mImpl->mDisplay, &event);
-    
-    if (event.xany.window != mImpl->mWindow) continue;
 
-    switch (event.type) {
-      case Expose:
-        if (event.xexpose.count == 0) {
-          SetAllControlsDirty();
-        }
-        break;
-        
-      case ButtonPress: {
-        IMouseMod modifiers;
-        unsigned int state = event.xbutton.state;
-        if (state & ShiftMask) modifiers.S = true;
-        if (state & ControlMask) modifiers.C = true;
-        if (state & Mod1Mask) modifiers.A = true;
-        if (event.xbutton.button == Button1) modifiers.L = true;
-        if (event.xbutton.button == Button3) modifiers.R = true;
-        
-        float x = (float)event.xbutton.x;
-        float y = (float)event.xbutton.y;
-        
-        // Double-click detection (250ms threshold, 5 pixel tolerance)
-        Time clickTime = event.xbutton.time;
-        bool isDoubleClick = false;
-        
-        if (event.xbutton.button == mImpl->mLastClickButton &&
-            (clickTime - mImpl->mLastClickTime) < 250 &&
-            (x - mImpl->mLastClickX) > -5.f && (x - mImpl->mLastClickX) < 5.f &&
-            (y - mImpl->mLastClickY) > -5.f && (y - mImpl->mLastClickY) < 5.f)
-        {
-          isDoubleClick = true;
-          mImpl->mLastClickTime = 0; // Reset to prevent triple-click as double
-        }
-        else
-        {
-          mImpl->mLastClickTime = clickTime;
-          mImpl->mLastClickX = x;
-          mImpl->mLastClickY = y;
-          mImpl->mLastClickButton = event.xbutton.button;
-        }
-        
-        // Initialize drag tracking position for smooth first drag
-        mImpl->mPrevMouseX = x;
-        mImpl->mPrevMouseY = y;
-        
-        if (isDoubleClick) {
-          OnMouseDblClick(x, y, modifiers);
-        } else {
-          std::vector<IMouseInfo> points;
-          IMouseInfo info;
-          info.x = x;
-          info.y = y;
-          info.ms = modifiers;
-          points.push_back(info);
-          OnMouseDown(points);
-        }
-        break;
-      }
-        
-      case ButtonRelease: {
-        IMouseMod modifiers;
-        unsigned int state = event.xbutton.state;
-        if (state & ShiftMask) modifiers.S = true;
-        if (state & ControlMask) modifiers.C = true;
-        if (state & Mod1Mask) modifiers.A = true;
-        // Set button based on which button was released
-        if (event.xbutton.button == Button1) modifiers.L = true;
-        if (event.xbutton.button == Button3) modifiers.R = true;
-        
-        std::vector<IMouseInfo> points;
-        IMouseInfo info;
-        info.x = (float)event.xbutton.x;
-        info.y = (float)event.xbutton.y;
-        info.ms = modifiers;
-        points.push_back(info);
-        OnMouseUp(points);
-        break;
-      }
-        
-      case MotionNotify: {
-        IMouseMod modifiers;
-        unsigned int state = event.xmotion.state;
-        if (state & ShiftMask) modifiers.S = true;
-        if (state & ControlMask) modifiers.C = true;
-        if (state & Mod1Mask) modifiers.A = true;
-        if (state & Button1Mask) modifiers.L = true;
-        if (state & Button3Mask) modifiers.R = true;
-        
-        // Check if a button is pressed (dragging)
-        if (state & (Button1Mask | Button3Mask)) {
-          float x = (float)event.xmotion.x;
-          float y = (float)event.xmotion.y;
-          
-          std::vector<IMouseInfo> points;
-          IMouseInfo info;
-          info.x = x;
-          info.y = y;
-          info.dX = x - mImpl->mPrevMouseX;
-          info.dY = y - mImpl->mPrevMouseY;
-          info.ms = modifiers;
-          points.push_back(info);
-          
-          if (!IsInPlatformTextEntry()) {
-            OnMouseDrag(points);
-          }
-          
-          mImpl->mPrevMouseX = x;
-          mImpl->mPrevMouseY = y;
-        } else {
-          // No button pressed, just mouse over
-          OnMouseOver((float)event.xmotion.x, (float)event.xmotion.y, modifiers);
-        }
-        break;
-      }
-        
-      case KeyPress: {
-        IMouseMod modifiers;
-        unsigned int state = event.xkey.state;
-        if (state & ShiftMask) modifiers.S = true;
-        if (state & ControlMask) modifiers.C = true;
-        if (state & Mod1Mask) modifiers.A = true;
-        
-        KeySym keysym = XLookupKeysym(&event.xkey, 0);
-        IKeyPress kp = XKeyToKeyPress(keysym);
-        if (kp.VK) {
-          float mx, my;
-          GetMouseLocation(mx, my);
-          OnKeyDown(mx, my, kp);
-        }
-        break;
-      }
-      
-      case ClientMessage:
-        if ((Atom)event.xclient.data.l[0] == mImpl->mWmDeleteMessage) {
-          CloseWindow();
-          return false;
-        }
-        break;
-    }
+    if (!HandleXEvent(event))
+      return false;
   }
   return true;
+}
+
+bool IGraphicsLinux::HandleXEvent(const XEvent& event)
+{
+  if (event.xany.window != mImpl->mWindow)
+    return true;
+
+  switch (event.type) {
+    case Expose:
+      if (event.xexpose.count == 0) {
+        SetAllControlsDirty();
+      }
+      break;
+
+    case ButtonPress: {
+      IMouseMod modifiers;
+      unsigned int state = event.xbutton.state;
+      if (state & ShiftMask) modifiers.S = true;
+      if (state & ControlMask) modifiers.C = true;
+      if (state & Mod1Mask) modifiers.A = true;
+      if (event.xbutton.button == Button1) modifiers.L = true;
+      if (event.xbutton.button == Button3) modifiers.R = true;
+
+      float x = (float)event.xbutton.x;
+      float y = (float)event.xbutton.y;
+
+      // Double-click detection (250ms threshold, 5 pixel tolerance)
+      Time clickTime = event.xbutton.time;
+      bool isDoubleClick = false;
+
+      if (event.xbutton.button == mImpl->mLastClickButton &&
+          (clickTime - mImpl->mLastClickTime) < 250 &&
+          (x - mImpl->mLastClickX) > -5.f && (x - mImpl->mLastClickX) < 5.f &&
+          (y - mImpl->mLastClickY) > -5.f && (y - mImpl->mLastClickY) < 5.f)
+      {
+        isDoubleClick = true;
+        mImpl->mLastClickTime = 0; // Reset to prevent triple-click as double
+      }
+      else
+      {
+        mImpl->mLastClickTime = clickTime;
+        mImpl->mLastClickX = x;
+        mImpl->mLastClickY = y;
+        mImpl->mLastClickButton = event.xbutton.button;
+      }
+
+      // Initialize drag tracking position for smooth first drag
+      mImpl->mPrevMouseX = x;
+      mImpl->mPrevMouseY = y;
+
+      if (isDoubleClick) {
+        OnMouseDblClick(x, y, modifiers);
+      } else {
+        std::vector<IMouseInfo> points;
+        IMouseInfo info;
+        info.x = x;
+        info.y = y;
+        info.ms = modifiers;
+        points.push_back(info);
+        OnMouseDown(points);
+      }
+      break;
+    }
+
+    case ButtonRelease: {
+      IMouseMod modifiers;
+      unsigned int state = event.xbutton.state;
+      if (state & ShiftMask) modifiers.S = true;
+      if (state & ControlMask) modifiers.C = true;
+      if (state & Mod1Mask) modifiers.A = true;
+      // Set button based on which button was released
+      if (event.xbutton.button == Button1) modifiers.L = true;
+      if (event.xbutton.button == Button3) modifiers.R = true;
+
+      std::vector<IMouseInfo> points;
+      IMouseInfo info;
+      info.x = (float)event.xbutton.x;
+      info.y = (float)event.xbutton.y;
+      info.ms = modifiers;
+      points.push_back(info);
+      OnMouseUp(points);
+      break;
+    }
+
+    case MotionNotify: {
+      IMouseMod modifiers;
+      unsigned int state = event.xmotion.state;
+      if (state & ShiftMask) modifiers.S = true;
+      if (state & ControlMask) modifiers.C = true;
+      if (state & Mod1Mask) modifiers.A = true;
+      if (state & Button1Mask) modifiers.L = true;
+      if (state & Button3Mask) modifiers.R = true;
+
+      // Check if a button is pressed (dragging)
+      if (state & (Button1Mask | Button3Mask)) {
+        float x = (float)event.xmotion.x;
+        float y = (float)event.xmotion.y;
+
+        std::vector<IMouseInfo> points;
+        IMouseInfo info;
+        info.x = x;
+        info.y = y;
+        info.dX = x - mImpl->mPrevMouseX;
+        info.dY = y - mImpl->mPrevMouseY;
+        info.ms = modifiers;
+        points.push_back(info);
+
+        if (!IsInPlatformTextEntry()) {
+          OnMouseDrag(points);
+        }
+
+        mImpl->mPrevMouseX = x;
+        mImpl->mPrevMouseY = y;
+      } else {
+        // No button pressed, just mouse over
+        OnMouseOver((float)event.xmotion.x, (float)event.xmotion.y, modifiers);
+      }
+      break;
+    }
+
+    case KeyPress: {
+      XKeyEvent keyEvent = event.xkey;
+      IKeyPress kp = XKeyEventToKeyPress(mImpl->mInputContext, &keyEvent);
+      if (kp.VK != kVK_NONE || kp.utf8[0] != '\0') {
+        float mx, my;
+        GetMouseLocation(mx, my);
+        OnKeyDown(mx, my, kp);
+      }
+      break;
+    }
+
+    case KeyRelease: {
+      XKeyEvent keyEvent = event.xkey;
+      IKeyPress kp = XKeyEventToKeyPress(mImpl->mInputContext, &keyEvent);
+      if (kp.VK != kVK_NONE || kp.utf8[0] != '\0') {
+        float mx, my;
+        GetMouseLocation(mx, my);
+        OnKeyUp(mx, my, kp);
+      }
+      break;
+    }
+
+    case FocusIn:
+      if (mImpl->mInputContext)
+        XSetICFocus(mImpl->mInputContext);
+      break;
+
+    case FocusOut:
+      if (mImpl->mInputContext)
+        XUnsetICFocus(mImpl->mInputContext);
+      break;
+
+    case SelectionRequest:
+      HandleSelectionRequest(event.xselectionrequest);
+      break;
+
+    case SelectionNotify:
+      if (event.xselection.selection == mImpl->mXdndSelection)
+        HandleXdndSelectionNotify(event.xselection);
+      break;
+
+    case ClientMessage:
+      if (event.xclient.message_type == mImpl->mXdndEnter) {
+        HandleXdndEnter(event.xclient);
+        break;
+      }
+      if (event.xclient.message_type == mImpl->mXdndPosition) {
+        HandleXdndPosition(event.xclient);
+        break;
+      }
+      if (event.xclient.message_type == mImpl->mXdndDrop) {
+        HandleXdndDrop(event.xclient);
+        break;
+      }
+      if ((Atom)event.xclient.data.l[0] == mImpl->mWmDeleteMessage) {
+        CloseWindow();
+        return false;
+      }
+      break;
+  }
+
+  return true;
+}
+
+void IGraphicsLinux::HandleSelectionRequest(const XSelectionRequestEvent& event)
+{
+  XSelectionEvent sel = {};
+  sel.type = SelectionNotify;
+  sel.display = event.display;
+  sel.requestor = event.requestor;
+  sel.selection = event.selection;
+  sel.target = event.target;
+  sel.time = event.time;
+  sel.property = static_cast<Atom>(X11_None);
+
+  const Atom property = event.property != static_cast<Atom>(X11_None) ? event.property : event.target;
+
+  if (event.selection == mImpl->mClipboardAtom && event.target == mImpl->mTargetsAtom)
+  {
+    Atom targets[] = { mImpl->mTargetsAtom, mImpl->mUtf8StringAtom, XA_STRING, mImpl->mTextAtom };
+    XChangeProperty(mImpl->mDisplay, event.requestor, property, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(targets), sizeof(targets) / sizeof(targets[0]));
+    sel.property = property;
+  }
+  else if (event.selection == mImpl->mClipboardAtom &&
+           (event.target == mImpl->mUtf8StringAtom || event.target == XA_STRING || event.target == mImpl->mTextAtom))
+  {
+    const char* text = mImpl->mClipboardText.Get();
+    XChangeProperty(mImpl->mDisplay, event.requestor, property, event.target, 8, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(text), strlen(text));
+    sel.property = property;
+  }
+
+  XSendEvent(mImpl->mDisplay, event.requestor, False, 0, reinterpret_cast<XEvent*>(&sel));
+  XFlush(mImpl->mDisplay);
+}
+
+void IGraphicsLinux::HandleXdndEnter(const XClientMessageEvent& event)
+{
+  mImpl->mXdndSource = static_cast<::Window>(event.data.l[0]);
+  const bool hasMoreTypes = (event.data.l[1] & 1) != 0;
+  mImpl->mXdndAcceptsUriList = false;
+
+  if (hasMoreTypes)
+  {
+    mImpl->mXdndAcceptsUriList = WindowTypeListHasAtom(
+      mImpl->mDisplay, mImpl->mXdndSource, mImpl->mXdndTypeList, mImpl->mTextUriList);
+  }
+  else
+  {
+    mImpl->mXdndAcceptsUriList = XdndMessageHasUriList(event, mImpl->mTextUriList);
+  }
+}
+
+void IGraphicsLinux::HandleXdndPosition(const XClientMessageEvent& event)
+{
+  if (!mImpl->mDisplay || !mImpl->mWindow)
+    return;
+
+  mImpl->mXdndSource = static_cast<::Window>(event.data.l[0]);
+
+  const int rootX = static_cast<int>((event.data.l[2] >> 16) & 0xffff);
+  const int rootY = static_cast<int>(event.data.l[2] & 0xffff);
+
+  ::Window child = 0;
+  int winX = 0;
+  int winY = 0;
+  XTranslateCoordinates(mImpl->mDisplay, DefaultRootWindow(mImpl->mDisplay),
+                        mImpl->mWindow, rootX, rootY, &winX, &winY, &child);
+
+  const float scale = GetTotalScale();
+  mImpl->mXdndDropX = static_cast<float>(winX) / scale;
+  mImpl->mXdndDropY = static_cast<float>(winY) / scale;
+
+  XClientMessageEvent reply = {};
+  reply.type = ClientMessage;
+  reply.display = mImpl->mDisplay;
+  reply.window = mImpl->mXdndSource;
+  reply.message_type = mImpl->mXdndStatus;
+  reply.format = 32;
+  reply.data.l[0] = mImpl->mWindow;
+  reply.data.l[1] = mImpl->mXdndAcceptsUriList ? 1 : 0;
+  reply.data.l[2] = 0;
+  reply.data.l[3] = 0;
+  reply.data.l[4] = mImpl->mXdndAcceptsUriList ? mImpl->mXdndActionCopy : X11_None;
+
+  XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&reply));
+  XFlush(mImpl->mDisplay);
+}
+
+void IGraphicsLinux::HandleXdndDrop(const XClientMessageEvent& event)
+{
+  if (!mImpl->mXdndAcceptsUriList)
+  {
+    XClientMessageEvent finished = {};
+    finished.type = ClientMessage;
+    finished.display = mImpl->mDisplay;
+    finished.window = mImpl->mXdndSource;
+    finished.message_type = mImpl->mXdndFinished;
+    finished.format = 32;
+    finished.data.l[0] = mImpl->mWindow;
+    finished.data.l[1] = 0;
+    finished.data.l[2] = X11_None;
+    XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&finished));
+    XFlush(mImpl->mDisplay);
+    return;
+  }
+
+  XConvertSelection(mImpl->mDisplay, mImpl->mXdndSelection, mImpl->mTextUriList,
+                    mImpl->mIPlugXdndProperty, mImpl->mWindow,
+                    static_cast<Time>(event.data.l[2]));
+  XFlush(mImpl->mDisplay);
+}
+
+void IGraphicsLinux::HandleXdndSelectionNotify(const XSelectionEvent& event)
+{
+  bool success = false;
+
+  if (event.property != static_cast<Atom>(X11_None))
+  {
+    Atom actualType = 0;
+    int actualFormat = 0;
+    unsigned long itemCount = 0;
+    unsigned long bytesAfter = 0;
+    unsigned char* data = nullptr;
+
+    const int result = XGetWindowProperty(mImpl->mDisplay, mImpl->mWindow, event.property,
+                                          0, 1024 * 1024, True, AnyPropertyType,
+                                          &actualType, &actualFormat, &itemCount, &bytesAfter, &data);
+    if (result == Success && data && actualFormat == 8)
+    {
+      std::string payload(reinterpret_cast<const char*>(data), itemCount);
+      std::vector<std::string> paths = ParseTextUriList(payload.c_str());
+
+      if (paths.size() == 1)
+      {
+        OnDrop(paths[0].c_str(), mImpl->mXdndDropX, mImpl->mXdndDropY);
+        success = true;
+      }
+      else if (paths.size() > 1)
+      {
+        std::vector<const char*> pathPtrs;
+        pathPtrs.reserve(paths.size());
+        for (const std::string& path : paths)
+          pathPtrs.push_back(path.c_str());
+        OnDropMultiple(pathPtrs, mImpl->mXdndDropX, mImpl->mXdndDropY);
+        success = true;
+      }
+    }
+
+    if (data)
+      XFree(data);
+  }
+
+  XClientMessageEvent finished = {};
+  finished.type = ClientMessage;
+  finished.display = mImpl->mDisplay;
+  finished.window = mImpl->mXdndSource;
+  finished.message_type = mImpl->mXdndFinished;
+  finished.format = 32;
+  finished.data.l[0] = mImpl->mWindow;
+  finished.data.l[1] = success ? 1 : 0;
+  finished.data.l[2] = success ? mImpl->mXdndActionCopy : X11_None;
+  XSendEvent(mImpl->mDisplay, mImpl->mXdndSource, False, NoEventMask, reinterpret_cast<XEvent*>(&finished));
+  XFlush(mImpl->mDisplay);
 }
 
 void IGraphicsLinux::GetMouseLocation(float& x, float& y) const {
@@ -412,6 +869,78 @@ void IGraphicsLinux::MoveMouseCursor(float x, float y) {
 
 ECursor IGraphicsLinux::SetMouseCursor(ECursor cursorType) {
   return ECursor::ARROW;
+}
+
+bool IGraphicsLinux::SetTextInClipboard(const char* str)
+{
+  if (!mImpl->mDisplay || !mImpl->mWindow || !str)
+    return false;
+
+  mImpl->mClipboardText.Set(str);
+  XSetSelectionOwner(mImpl->mDisplay, mImpl->mClipboardAtom, mImpl->mWindow, CurrentTime);
+  return XGetSelectionOwner(mImpl->mDisplay, mImpl->mClipboardAtom) == mImpl->mWindow;
+}
+
+bool IGraphicsLinux::GetTextFromClipboard(WDL_String& str)
+{
+  if (!mImpl->mDisplay || !mImpl->mWindow)
+    return false;
+
+  ::Window owner = XGetSelectionOwner(mImpl->mDisplay, mImpl->mClipboardAtom);
+  if (owner == static_cast<::Window>(X11_None))
+    return false;
+
+  if (owner == mImpl->mWindow)
+  {
+    str.Set(mImpl->mClipboardText.Get());
+    return true;
+  }
+
+  XConvertSelection(mImpl->mDisplay, mImpl->mClipboardAtom, mImpl->mUtf8StringAtom,
+                    mImpl->mIPlugClipboardAtom, mImpl->mWindow, CurrentTime);
+  XFlush(mImpl->mDisplay);
+
+  for (int i = 0; i < 100; ++i)
+  {
+    while (XPending(mImpl->mDisplay))
+    {
+      XEvent event;
+      XNextEvent(mImpl->mDisplay, &event);
+
+      if (event.type == SelectionNotify && event.xselection.selection == mImpl->mClipboardAtom)
+      {
+        if (event.xselection.property == static_cast<Atom>(X11_None))
+          return false;
+
+        Atom type = 0;
+        int format = 0;
+        unsigned long nitems = 0;
+        unsigned long bytesAfter = 0;
+        unsigned char* data = nullptr;
+
+        const int result = XGetWindowProperty(mImpl->mDisplay, mImpl->mWindow, mImpl->mIPlugClipboardAtom,
+                                              0, 1024 * 1024, True, AnyPropertyType,
+                                              &type, &format, &nitems, &bytesAfter, &data);
+        if (result == Success && data && format == 8)
+        {
+          str.Set(reinterpret_cast<const char*>(data), static_cast<int>(nitems));
+          XFree(data);
+          return true;
+        }
+
+        if (data)
+          XFree(data);
+        return false;
+      }
+
+      if (!HandleXEvent(event))
+        return false;
+    }
+
+    usleep(1000);
+  }
+
+  return false;
 }
 
 // Stubs for Required Pure Virtuals
