@@ -771,7 +771,7 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         HandleXdndLeave(event.xclient);
         break;
       }
-      if ((Atom)event.xclient.data.l[0] == mImpl->mWmDeleteMessage) {
+      if (mImpl->mWmDeleteMessage != 0 && (Atom)event.xclient.data.l[0] == mImpl->mWmDeleteMessage) {
         CloseWindow();
         return false;
       }
