@@ -616,8 +616,14 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
       if (event.xbutton.button == Button1) modifiers.L = true;
       if (event.xbutton.button == Button3) modifiers.R = true;
 
-      float x = (float)event.xbutton.x;
-      float y = (float)event.xbutton.y;
+      XGrabPointer(mImpl->mDisplay, mImpl->mWindow, False,
+                   ButtonReleaseMask | PointerMotionMask,
+                   GrabModeAsync, GrabModeAsync, X11_None, X11_None, event.xbutton.time);
+
+      const float scale = GetTotalScale();
+      const float invScale = scale > 0.f ? 1.f / scale : 1.f;
+      float x = (float)event.xbutton.x * invScale;
+      float y = (float)event.xbutton.y * invScale;
 
       // Double-click detection (250ms threshold, 5 pixel tolerance)
       Time clickTime = event.xbutton.time;
@@ -667,13 +673,16 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
       if (event.xbutton.button == Button1) modifiers.L = true;
       if (event.xbutton.button == Button3) modifiers.R = true;
 
+      const float scale = GetTotalScale();
+      const float invScale = scale > 0.f ? 1.f / scale : 1.f;
       std::vector<IMouseInfo> points;
       IMouseInfo info;
-      info.x = (float)event.xbutton.x;
-      info.y = (float)event.xbutton.y;
+      info.x = (float)event.xbutton.x * invScale;
+      info.y = (float)event.xbutton.y * invScale;
       info.ms = modifiers;
       points.push_back(info);
       OnMouseUp(points);
+      XUngrabPointer(mImpl->mDisplay, event.xbutton.time);
       break;
     }
 
@@ -688,8 +697,10 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
 
       // Check if a button is pressed (dragging)
       if (state & (Button1Mask | Button3Mask)) {
-        float x = (float)event.xmotion.x;
-        float y = (float)event.xmotion.y;
+        const float scale = GetTotalScale();
+        const float invScale = scale > 0.f ? 1.f / scale : 1.f;
+        float x = (float)event.xmotion.x * invScale;
+        float y = (float)event.xmotion.y * invScale;
 
         std::vector<IMouseInfo> points;
         IMouseInfo info;
@@ -708,7 +719,9 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         mImpl->mPrevMouseY = y;
       } else {
         // No button pressed, just mouse over
-        OnMouseOver((float)event.xmotion.x, (float)event.xmotion.y, modifiers);
+        const float scale = GetTotalScale();
+        const float invScale = scale > 0.f ? 1.f / scale : 1.f;
+        OnMouseOver((float)event.xmotion.x * invScale, (float)event.xmotion.y * invScale, modifiers);
       }
       break;
     }
@@ -1035,8 +1048,10 @@ void IGraphicsLinux::GetMouseLocation(float& x, float& y) const {
   int rootX, rootY, winX, winY;
   unsigned int mask;
   if (XQueryPointer(mImpl->mDisplay, mImpl->mWindow, &root, &child, &rootX, &rootY, &winX, &winY, &mask)) {
-    x = (float)winX;
-    y = (float)winY;
+    const float scale = GetTotalScale();
+    const float invScale = scale > 0.f ? 1.f / scale : 1.f;
+    x = (float)winX * invScale;
+    y = (float)winY * invScale;
   }
 }
 
@@ -1046,7 +1061,8 @@ void IGraphicsLinux::HideMouseCursor(bool hide, bool lock) {
 
 void IGraphicsLinux::MoveMouseCursor(float x, float y) {
   if (mImpl->mDisplay && mImpl->mWindow) {
-    XWarpPointer(mImpl->mDisplay, X11_None, mImpl->mWindow, 0, 0, 0, 0, (int)x, (int)y);
+    const float scale = GetTotalScale();
+    XWarpPointer(mImpl->mDisplay, X11_None, mImpl->mWindow, 0, 0, 0, 0, (int)(x * scale), (int)(y * scale));
   }
 }
 
