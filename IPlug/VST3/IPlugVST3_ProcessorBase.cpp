@@ -13,10 +13,103 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "public.sdk/source/vst/vsteventshelper.h"
 #include "IPlugVST3_ProcessorBase.h"
+#if defined(BITTER_VST3_DIAGNOSTICS)
+#include "DebugLog.h"
+#include <cstdio>
+#endif
 
 using namespace iplug;
 using namespace Steinberg;
 using namespace Vst;
+
+#if defined(BITTER_VST3_DIAGNOSTICS)
+namespace
+{
+struct BitterVST3AudioDiag
+{
+  int setupSize = -1;
+  int dataSize = -1;
+  int frames = -1;
+  int inputBuses = -1;
+  int outputBuses = -1;
+  int input0Channels = -1;
+  long long input0SilenceFlags = -1;
+  int output0Channels = -1;
+  long long output0SilenceFlags = -1;
+  int inputConnected = -1;
+  int outputConnected = -1;
+  int path = -1;
+  int bypassed = -1;
+};
+
+bool operator==(const BitterVST3AudioDiag& a, const BitterVST3AudioDiag& b)
+{
+  return a.setupSize == b.setupSize &&
+         a.dataSize == b.dataSize &&
+         a.frames == b.frames &&
+         a.inputBuses == b.inputBuses &&
+         a.outputBuses == b.outputBuses &&
+         a.input0Channels == b.input0Channels &&
+         a.input0SilenceFlags == b.input0SilenceFlags &&
+         a.output0Channels == b.output0Channels &&
+         a.output0SilenceFlags == b.output0SilenceFlags &&
+         a.inputConnected == b.inputConnected &&
+         a.outputConnected == b.outputConnected &&
+         a.path == b.path &&
+         a.bypassed == b.bypassed;
+}
+
+void BitterVST3LogSetup(const char* event, const ProcessSetup& setup)
+{
+  char data[160];
+  std::snprintf(data, sizeof(data), "\"sampleSize\":%d,\"maxBlock\":%d,\"sampleRate\":%.1f",
+                setup.symbolicSampleSize, setup.maxSamplesPerBlock, setup.sampleRate);
+  DBLOG_RT_RAW(__FILE__, __LINE__, event, data, "BitterVST3");
+}
+
+void BitterVST3LogProcessingState(bool state)
+{
+  char data[32];
+  std::snprintf(data, sizeof(data), "\"state\":%d", state ? 1 : 0);
+  DBLOG_RT_RAW(__FILE__, __LINE__, "vst3_set_processing", data, "BitterVST3");
+}
+
+void BitterVST3LogAudio(const ProcessData& data, const ProcessSetup& setup, int inputConnected, int outputConnected, bool bypassed)
+{
+  static BitterVST3AudioDiag sLastAudioDiag;
+  static bool sHaveLastAudioDiag = false;
+
+  BitterVST3AudioDiag diag;
+  diag.setupSize = setup.symbolicSampleSize;
+  diag.dataSize = data.symbolicSampleSize;
+  diag.frames = data.numSamples;
+  diag.inputBuses = data.numInputs;
+  diag.outputBuses = data.numOutputs;
+  diag.input0Channels = (data.numInputs > 0) ? data.inputs[0].numChannels : 0;
+  diag.input0SilenceFlags = (data.numInputs > 0) ? static_cast<long long>(data.inputs[0].silenceFlags) : 0;
+  diag.output0Channels = (data.numOutputs > 0) ? data.outputs[0].numChannels : 0;
+  diag.output0SilenceFlags = (data.numOutputs > 0) ? static_cast<long long>(data.outputs[0].silenceFlags) : 0;
+  diag.inputConnected = inputConnected;
+  diag.outputConnected = outputConnected;
+  diag.path = (inputConnected >= 2 && outputConnected >= 2) ? 2 : ((inputConnected >= 1 && outputConnected >= 1) ? 1 : 0);
+  diag.bypassed = bypassed ? 1 : 0;
+
+  if (sHaveLastAudioDiag && diag == sLastAudioDiag)
+    return;
+
+  char logData[240];
+  std::snprintf(logData, sizeof(logData),
+                "\"setup\":%d,\"data\":%d,\"frames\":%d,\"inB\":%d,\"outB\":%d,\"in0ch\":%d,\"in0sil\":%lld,\"out0ch\":%d,\"out0sil\":%lld,\"inConn\":%d,\"outConn\":%d,\"path\":%d,\"byp\":%d",
+                diag.setupSize, diag.dataSize, diag.frames, diag.inputBuses, diag.outputBuses,
+                diag.input0Channels, diag.input0SilenceFlags, diag.output0Channels, diag.output0SilenceFlags,
+                diag.inputConnected, diag.outputConnected, diag.path, diag.bypassed);
+  DBLOG_RT_RAW(__FILE__, __LINE__, "vst3_process_audio", logData, "BitterVST3");
+
+  sLastAudioDiag = diag;
+  sHaveLastAudioDiag = true;
+}
+}
+#endif
 
 #ifndef CUSTOM_BUSTYPE_FUNC
 uint64_t iplug::GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int busIdx, const IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes)
@@ -226,12 +319,20 @@ bool IPlugVST3ProcessorBase::SetupProcessing(const ProcessSetup& setup, ProcessS
   IPlugProcessor::SetBlockSize(setup.maxSamplesPerBlock);
   mMidiOutputQueue.Resize(setup.maxSamplesPerBlock);
   OnReset();
+
+#if defined(BITTER_VST3_DIAGNOSTICS)
+  BitterVST3LogSetup("vst3_setup_processing", setup);
+#endif
     
   return true;
 }
 
 bool IPlugVST3ProcessorBase::SetProcessing(bool state)
 {
+#if defined(BITTER_VST3_DIAGNOSTICS)
+  BitterVST3LogProcessingState(state);
+#endif
+
   if (!state)
     OnReset();
   
@@ -395,6 +496,10 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
       AttachBuffers(ERoute::kOutput, chanOffset, busChannels, data.outputs[outBus], data.numSamples, sampleSize);
       chanOffset += busChannels;
     }
+
+#if defined(BITTER_VST3_DIAGNOSTICS)
+    BitterVST3LogAudio(data, setup, NChannelsConnected(ERoute::kInput), NChannelsConnected(ERoute::kOutput), GetBypassed());
+#endif
     
     if (GetBypassed())
     {
