@@ -64,11 +64,41 @@ bool CheckRoute(const char* name,
 
   iplug::RouteMainInputToOutputs(
     inputPointers.data(), outputPointers.data(),
-    mainInputs, outputs, 4);
+    mainInputs, outputs, outputs, 4);
 
   bool passed = true;
   passed &= Check(outputLeft == expectedLeft, name);
   passed &= Check(outputRight == expectedRight, name);
+  return passed;
+}
+
+bool CheckAuxOutputsAreCleared()
+{
+  std::array<double, 4> mainLeft{{0.25, -0.5, 0.75, -1.0}};
+  std::array<double, 4> sidechain{{8.0, 8.0, 8.0, 8.0}};
+  std::array<double, 4> outputLeft{{9.0, 9.0, 9.0, 9.0}};
+  std::array<double, 4> outputRight{{9.0, 9.0, 9.0, 9.0}};
+  std::array<double, 4> outputAuxLeft{{9.0, 9.0, 9.0, 9.0}};
+  std::array<double, 4> outputAuxRight{{9.0, 9.0, 9.0, 9.0}};
+  std::array<const double*, 2> inputPointers{{
+    mainLeft.data(), sidechain.data()}};
+  std::array<double*, 4> outputPointers{{
+    outputLeft.data(), outputRight.data(),
+    outputAuxLeft.data(), outputAuxRight.data()}};
+
+  iplug::RouteMainInputToOutputs(
+    inputPointers.data(), outputPointers.data(), 1, 2, 4, 4);
+
+  const std::array<double, 4> silence{{0.0, 0.0, 0.0, 0.0}};
+  bool passed = true;
+  passed &= Check(outputLeft == mainLeft,
+                  "1-2.2 direct route maps mono to main left");
+  passed &= Check(outputRight == mainLeft,
+                  "1-2.2 direct route maps mono to main right");
+  passed &= Check(outputAuxLeft == silence,
+                  "1-2.2 direct route clears auxiliary left");
+  passed &= Check(outputAuxRight == silence,
+                  "1-2.2 direct route clears auxiliary right");
   return passed;
 }
 
@@ -78,18 +108,29 @@ bool CheckDelayedMonoRoute()
   std::array<double, 6> sidechain{{8.0, 8.0, 8.0, 8.0, 8.0, 8.0}};
   std::array<double, 6> outputLeft{{9.0, 9.0, 9.0, 9.0, 9.0, 9.0}};
   std::array<double, 6> outputRight{{9.0, 9.0, 9.0, 9.0, 9.0, 9.0}};
+  std::array<double, 6> outputAuxLeft{{9.0, 9.0, 9.0, 9.0, 9.0, 9.0}};
+  std::array<double, 6> outputAuxRight{{9.0, 9.0, 9.0, 9.0, 9.0, 9.0}};
   std::array<double*, 2> inputPointers{{mainLeft.data(), sidechain.data()}};
-  std::array<double*, 2> outputPointers{{outputLeft.data(), outputRight.data()}};
+  std::array<double*, 4> outputPointers{{
+    outputLeft.data(), outputRight.data(),
+    outputAuxLeft.data(), outputAuxRight.data()}};
 
-  iplug::NChanDelayLine<double> delay(2, 2);
+  iplug::NChanDelayLine<double> delay(2, 4);
   delay.SetDelayTime(2);
-  delay.ProcessBlock(inputPointers.data(), outputPointers.data(), 6, 1);
+  delay.ProcessBlock(inputPointers.data(), outputPointers.data(), 6, 1, 2);
 
   const std::array<double, 6> expected{{0.0, 0.0, 0.25, -0.5, 0.75, -1.0}};
-  return Check(outputLeft == expected,
-               "latency-compensated 1-2 routes main mono input left") &&
-         Check(outputRight == expected,
-               "latency-compensated 1-2 duplicates main mono input right");
+  const std::array<double, 6> silence{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+  bool passed = true;
+  passed &= Check(outputLeft == expected,
+                  "latency-compensated 1-2.2 maps mono to main left");
+  passed &= Check(outputRight == expected,
+                  "latency-compensated 1-2.2 maps mono to main right");
+  passed &= Check(outputAuxLeft == silence,
+                  "latency-compensated 1-2.2 clears auxiliary left");
+  passed &= Check(outputAuxRight == silence,
+                  "latency-compensated 1-2.2 clears auxiliary right");
+  return passed;
 }
 
 bool CheckFailedStateIsTransactional()
@@ -151,6 +192,7 @@ int main()
   passed &= CheckRoute("1-1 dry route", 1, 1, left, untouched);
   passed &= CheckRoute("1-2 duplicates main mono input", 1, 2, left, left);
   passed &= CheckRoute("2-2 preserves stereo inputs", 2, 2, left, right);
+  passed &= CheckAuxOutputsAreCleared();
   passed &= CheckDelayedMonoRoute();
   passed &= CheckFailedStateIsTransactional();
   passed &= CheckSuccessfulStateOrdering();

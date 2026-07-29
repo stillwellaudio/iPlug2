@@ -1761,6 +1761,11 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
       const int nMainInputChannels =
         pMainInputBus != nullptr && pMainInputBus->mConnected
           ? pMainInputBus->mNHostChannels : 0;
+      const BusChannels* pMainOutputBus =
+        _this->mOutBuses.GetSize() > 0 ? _this->mOutBuses.Get(0) : nullptr;
+      const int nMainOutputChannels =
+        pMainOutputBus != nullptr && pMainOutputBus->mConnected
+          ? pMainOutputBus->mNHostChannels : 0;
       ENTER_PARAMS_MUTEX_STATIC
       RunHostBypassBlock(
         false,
@@ -1770,7 +1775,8 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
         },
         [&]() {
           _this->PassThroughBuffers(
-            (AudioSampleType) 0, nFrames, nMainInputChannels);
+            (AudioSampleType) 0, nFrames,
+            nMainInputChannels, nMainOutputChannels);
         });
       LEAVE_PARAMS_MUTEX_STATIC
     }
