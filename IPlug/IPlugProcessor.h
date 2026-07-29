@@ -283,6 +283,10 @@ protected:
   void AttachBuffers(ERoute direction, int idx, int n, PLUG_SAMPLE_SRC** ppData, int nFrames);
   void PassThroughBuffers(PLUG_SAMPLE_SRC type, int nFrames);
   void PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames);
+  void PassThroughBuffers(PLUG_SAMPLE_SRC type, int nFrames,
+                          int nMainInputChannels);
+  void PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames,
+                          int nMainInputChannels);
   void ProcessBuffers(PLUG_SAMPLE_SRC type, int nFrames);
   void ProcessBuffers(PLUG_SAMPLE_DST type, int nFrames);
   void ProcessBuffersAccumulating(int nFrames); // only for VST2 deprecated method single precision

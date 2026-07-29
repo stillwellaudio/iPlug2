@@ -15,6 +15,7 @@
 
 #include "dfx-au-utilities.h"
 #include "IPlugBypassContract.h"
+#include "IPlugStateRestoreContract.h"
 #include "IPlugAU.h"
 #include "IPlugAU_ioconfig.h"
 
@@ -1490,8 +1491,6 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
     return kAudioUnitErr_InvalidPropertyValue;
   }
   
-  RestorePreset(presetName);
-
   IByteChunk chunk;
 
   if (!GetDataFromDict(pDict, kAUPresetDataKey, &chunk))
@@ -1503,12 +1502,29 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
   //  int pos;
   //  IByteChunk::GetIPlugVerFromChunk(chunk, pos)
   
-  if (UnserializeState(chunk, 0) <= 0)
+  int presetIdx = -1;
+  for (int idx = 0; idx < NPresets(); ++idx)
   {
-    return kAudioUnitErr_InvalidPropertyValue;
+    if (!std::strcmp(GetPresetName(idx), presetName))
+    {
+      presetIdx = idx;
+      break;
+    }
   }
 
-  OnRestoreState();
+  const bool restored = RunValidatedStateTransaction(
+    [&]() { return UnserializeState(chunk, 0) > 0; },
+    [&]() {
+      if (presetIdx >= 0)
+      {
+        SetCurrentPresetIdx(presetIdx);
+        OnPresetsModified();
+      }
+    },
+    [&]() { OnRestoreState(); });
+  if (!restored)
+    return kAudioUnitErr_InvalidPropertyValue;
+
   return noErr;
 }
 
@@ -1740,6 +1756,11 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
 
     if (_this->GetBypassed())
     {
+      const BusChannels* pMainInputBus =
+        _this->mInBuses.GetSize() > 0 ? _this->mInBuses.Get(0) : nullptr;
+      const int nMainInputChannels =
+        pMainInputBus != nullptr && pMainInputBus->mConnected
+          ? pMainInputBus->mNHostChannels : 0;
       ENTER_PARAMS_MUTEX_STATIC
       RunHostBypassBlock(
         false,
@@ -1748,7 +1769,8 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
             _this->GetScratchData(ERoute::kInput), nFrames);
         },
         [&]() {
-          _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
+          _this->PassThroughBuffers(
+            (AudioSampleType) 0, nFrames, nMainInputChannels);
         });
       LEAVE_PARAMS_MUTEX_STATIC
     }
