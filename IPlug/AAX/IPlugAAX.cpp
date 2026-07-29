@@ -9,6 +9,7 @@
 */
 
 #include "IPlugAAX.h"
+#include "IPlugBypassContract.h"
 #include "IPlugAAX_view_interface.h"
 #include "AAX_CBinaryTaperDelegate.h"
 #include "AAX_CBinaryDisplayDelegate.h"
@@ -440,7 +441,6 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       copyWetScratch();
 
       SetBypassed(true);
-      ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
       PassThroughBuffers((sample) 0.0, numSamples);
       copyDryScratch();
     }
@@ -457,9 +457,6 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     {
       ProcessBuffers((sample) 0.0, numSamples);
       copyWetScratch();
-
-      if (bypass)
-        ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
 
       PassThroughBuffers((sample) 0.0, numSamples);
       copyDryScratch();
@@ -508,8 +505,14 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     mMeterLevelIn = GetInputBufferMaxValue(pRenderInfo, numSamples);
     mMeterLevelGR = 0.;
     ENTER_PARAMS_MUTEX
-    ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
-    PassThroughBuffers(0.0f, numSamples);
+    RunHostBypassBlock(
+      false,
+      [&]() {
+        ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
+      },
+      [&]() {
+        PassThroughBuffers(0.0f, numSamples);
+      });
     LEAVE_PARAMS_MUTEX
     mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
     *pRenderInfo->mMeters[0] = fmax(mMeterLevelIn, *pRenderInfo->mMeters[0]);

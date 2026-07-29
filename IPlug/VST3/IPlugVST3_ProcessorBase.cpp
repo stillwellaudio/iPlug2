@@ -12,6 +12,7 @@
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "public.sdk/source/vst/vsteventshelper.h"
+#include "IPlugBypassContract.h"
 #include "IPlugVST3_ProcessorBase.h"
 #if defined(BITTER_VST3_DIAGNOSTICS)
 #include "DebugLog.h"
@@ -503,10 +504,24 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
     
     if (GetBypassed())
     {
-      if (sampleSize == kSample32)
-        PassThroughBuffers(0.f, data.numSamples); // single precision
-      else
-        PassThroughBuffers(0.0, data.numSamples); // double precision
+#ifdef PARAMS_MUTEX
+      mPlug.mParams_mutex.Enter();
+#endif
+      RunHostBypassBlock(
+        false,
+        [&]() {
+          ProcessWhileBypassed(
+            GetScratchData(ERoute::kInput), data.numSamples);
+        },
+        [&]() {
+          if (sampleSize == kSample32)
+            PassThroughBuffers(0.f, data.numSamples); // single precision
+          else
+            PassThroughBuffers(0.0, data.numSamples); // double precision
+        });
+#ifdef PARAMS_MUTEX
+      mPlug.mParams_mutex.Leave();
+#endif
     }
     else
     {
