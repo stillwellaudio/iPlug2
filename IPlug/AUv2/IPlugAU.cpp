@@ -14,6 +14,7 @@
 #include "heapbuf.h"
 
 #include "dfx-au-utilities.h"
+#include "IPlugBypassContract.h"
 #include "IPlugAU.h"
 #include "IPlugAU_ioconfig.h"
 
@@ -1502,7 +1503,7 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
   //  int pos;
   //  IByteChunk::GetIPlugVerFromChunk(chunk, pos)
   
-  if (!UnserializeState(chunk, 0))
+  if (UnserializeState(chunk, 0) <= 0)
   {
     return kAudioUnitErr_InvalidPropertyValue;
   }
@@ -1739,7 +1740,17 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
 
     if (_this->GetBypassed())
     {
-      _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
+      ENTER_PARAMS_MUTEX_STATIC
+      RunHostBypassBlock(
+        false,
+        [&]() {
+          _this->ProcessWhileBypassed(
+            _this->GetScratchData(ERoute::kInput), nFrames);
+        },
+        [&]() {
+          _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
+        });
+      LEAVE_PARAMS_MUTEX_STATIC
     }
     else
     {
@@ -2482,4 +2493,3 @@ OSStatus IPlugAU::DoSysEx(IPlugAU* _this, const UInt8* inData, UInt32 inLength)
   else
     return badComponentSelector;
 }
-
