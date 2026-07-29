@@ -510,13 +510,23 @@ void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type,
                                         int nFrames,
                                         int nMainInputChannels)
 {
+  PassThroughBuffers(
+    type, nFrames, nMainInputChannels, NOutChansConnected());
+}
+
+void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type,
+                                        int nFrames,
+                                        int nMainInputChannels,
+                                        int nMainOutputChannels)
+{
   if (mLatency && mLatencyDelay)
   {
     mLatencyDelay->ProcessBlock(
       mScratchData[ERoute::kInput].Get(),
       mScratchData[ERoute::kOutput].Get(),
       nFrames,
-      nMainInputChannels);
+      nMainInputChannels,
+      nMainOutputChannels);
   }
   else
   {
@@ -524,6 +534,7 @@ void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type,
       mScratchData[ERoute::kInput].Get(),
       mScratchData[ERoute::kOutput].Get(),
       nMainInputChannels,
+      nMainOutputChannels,
       MaxNChannels(ERoute::kOutput),
       nFrames);
   }
@@ -538,8 +549,19 @@ void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_SRC type,
                                         int nFrames,
                                         int nMainInputChannels)
 {
+  PassThroughBuffers(
+    type, nFrames, nMainInputChannels, NOutChansConnected());
+}
+
+void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_SRC type,
+                                        int nFrames,
+                                        int nMainInputChannels,
+                                        int nMainOutputChannels)
+{
   // for PLUG_SAMPLE_SRC bit buffers, first run the delay (if mLatency) on the PLUG_SAMPLE_DST IPlug buffers
-  PassThroughBuffers(PLUG_SAMPLE_DST(0.), nFrames, nMainInputChannels);
+  PassThroughBuffers(
+    PLUG_SAMPLE_DST(0.), nFrames,
+    nMainInputChannels, nMainOutputChannels);
 
   int i, n = MaxNChannels(ERoute::kOutput);
   IChannelData<>** ppOutChannel = mChannelData[ERoute::kOutput].GetList();

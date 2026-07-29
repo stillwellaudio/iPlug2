@@ -40,7 +40,9 @@ public:
 
   void ProcessBlock(T** inputs, T** outputs, int nFrames)
   {
-    ProcessBlock(inputs, outputs, nFrames, static_cast<int>(mNInChans));
+    ProcessBlock(inputs, outputs, nFrames,
+                 static_cast<int>(mNInChans),
+                 static_cast<int>(mNOutChans));
   }
 
   void ProcessBlock(T** inputs,
@@ -48,20 +50,38 @@ public:
                     int nFrames,
                     int nMainInputChannels)
   {
+    ProcessBlock(inputs, outputs, nFrames, nMainInputChannels,
+                 static_cast<int>(mNOutChans));
+  }
+
+  void ProcessBlock(T** inputs,
+                    T** outputs,
+                    int nFrames,
+                    int nMainInputChannels,
+                    int nMainOutputChannels)
+  {
     T* buffer = mBuffer.Get();
     const int mainInputs = std::clamp(
       nMainInputChannels, 0, static_cast<int>(mNInChans));
+    const int mainOutputs = std::clamp(
+      nMainOutputChannels, 0, static_cast<int>(mNOutChans));
 
     for (auto s = 0 ; s < nFrames; ++s)
     {
       for (uint32_t c = 0; c < mNOutChans; c++)
       {
         const int outputChannel = static_cast<int>(c);
+        const uint32_t offset = c * mDTSamples;
+        if (outputChannel >= mainOutputs)
+        {
+          outputs[c][s] = T{};
+          buffer[offset + mWriteAddress] = T{};
+          continue;
+        }
         const int inputChannel = mainInputs == 1
           ? 0
           : (outputChannel < mainInputs ? outputChannel : -1);
         const T input = inputChannel >= 0 ? inputs[inputChannel][s] : T{};
-        const uint32_t offset = c * mDTSamples;
         outputs[c][s] = buffer[offset + mWriteAddress];
         buffer[offset + mWriteAddress] = input;
       }

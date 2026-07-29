@@ -287,6 +287,12 @@ protected:
                           int nMainInputChannels);
   void PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames,
                           int nMainInputChannels);
+  void PassThroughBuffers(PLUG_SAMPLE_SRC type, int nFrames,
+                          int nMainInputChannels,
+                          int nMainOutputChannels);
+  void PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames,
+                          int nMainInputChannels,
+                          int nMainOutputChannels);
   void ProcessBuffers(PLUG_SAMPLE_SRC type, int nFrames);
   void ProcessBuffers(PLUG_SAMPLE_DST type, int nFrames);
   void ProcessBuffersAccumulating(int nFrames); // only for VST2 deprecated method single precision

@@ -12,6 +12,7 @@
 
 #include "IPlugPlatform.h"
 
+#include <algorithm>
 #include <cstring>
 
 BEGIN_IPLUG_NAMESPACE
@@ -34,22 +35,27 @@ inline void RunHostBypassBlock(bool wetStateAlreadyAdvanced,
 
 /** Route only the main input bus to dry outputs.
  *
- * A mono main input is duplicated to every dry output. Multi-channel main
- * input channels retain their indices; outputs beyond that bus are cleared,
- * so a sidechain stored after the main bus can never leak into dry output.
+ * A mono main input is duplicated across the main output bus. Multi-channel
+ * main input channels retain their indices; auxiliary outputs are cleared, so
+ * neither a sidechain nor the main input can leak across a bus boundary.
  */
 template <typename Sample>
 inline void RouteMainInputToOutputs(const Sample* const* inputs,
                                     Sample* const* outputs,
                                     int nMainInputChannels,
+                                    int nMainOutputChannels,
                                     int nOutputChannels,
                                     int nFrames)
 {
+  const int mainOutputs = std::max(
+    0, std::min(nMainOutputChannels, nOutputChannels));
   for (int output = 0; output < nOutputChannels; ++output)
   {
     if (outputs == nullptr || outputs[output] == nullptr)
       continue;
-    const int input = nMainInputChannels == 1
+    const int input = output >= mainOutputs
+      ? -1
+      : nMainInputChannels == 1
       ? 0
       : (output < nMainInputChannels ? output : -1);
     if (input >= 0 && inputs != nullptr && inputs[input] != nullptr)
