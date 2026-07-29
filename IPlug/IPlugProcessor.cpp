@@ -14,6 +14,7 @@
  */
 
 #include "IPlugProcessor.h"
+#include "IPlugBypassContract.h"
 
 #ifdef OS_WIN
 #define strtok_r strtok_s
@@ -502,16 +503,43 @@ void IPlugProcessor::AttachBuffers(ERoute direction, int idx, int n, PLUG_SAMPLE
 
 void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames)
 {
+  PassThroughBuffers(type, nFrames, NInChansConnected());
+}
+
+void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type,
+                                        int nFrames,
+                                        int nMainInputChannels)
+{
   if (mLatency && mLatencyDelay)
-    mLatencyDelay->ProcessBlock(mScratchData[ERoute::kInput].Get(), mScratchData[ERoute::kOutput].Get(), nFrames);
+  {
+    mLatencyDelay->ProcessBlock(
+      mScratchData[ERoute::kInput].Get(),
+      mScratchData[ERoute::kOutput].Get(),
+      nFrames,
+      nMainInputChannels);
+  }
   else
-    IPlugProcessor::ProcessBlock(mScratchData[ERoute::kInput].Get(), mScratchData[ERoute::kOutput].Get(), nFrames);
+  {
+    RouteMainInputToOutputs(
+      mScratchData[ERoute::kInput].Get(),
+      mScratchData[ERoute::kOutput].Get(),
+      nMainInputChannels,
+      MaxNChannels(ERoute::kOutput),
+      nFrames);
+  }
 }
 
 void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_SRC type, int nFrames)
 {
+  PassThroughBuffers(type, nFrames, NInChansConnected());
+}
+
+void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_SRC type,
+                                        int nFrames,
+                                        int nMainInputChannels)
+{
   // for PLUG_SAMPLE_SRC bit buffers, first run the delay (if mLatency) on the PLUG_SAMPLE_DST IPlug buffers
-  PassThroughBuffers(PLUG_SAMPLE_DST(0.), nFrames);
+  PassThroughBuffers(PLUG_SAMPLE_DST(0.), nFrames, nMainInputChannels);
 
   int i, n = MaxNChannels(ERoute::kOutput);
   IChannelData<>** ppOutChannel = mChannelData[ERoute::kOutput].GetList();

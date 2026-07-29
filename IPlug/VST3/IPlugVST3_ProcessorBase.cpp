@@ -504,6 +504,8 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
     
     if (GetBypassed())
     {
+      const int nMainInputChannels =
+        data.numInputs > 0 ? data.inputs[0].numChannels : 0;
 #ifdef PARAMS_MUTEX
       mPlug.mParams_mutex.Enter();
 #endif
@@ -515,9 +517,11 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
         },
         [&]() {
           if (sampleSize == kSample32)
-            PassThroughBuffers(0.f, data.numSamples); // single precision
+            PassThroughBuffers(
+              0.f, data.numSamples, nMainInputChannels); // single precision
           else
-            PassThroughBuffers(0.0, data.numSamples); // double precision
+            PassThroughBuffers(
+              0.0, data.numSamples, nMainInputChannels); // double precision
         });
 #ifdef PARAMS_MUTEX
       mPlug.mParams_mutex.Leave();

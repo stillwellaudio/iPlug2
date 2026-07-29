@@ -441,12 +441,12 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       copyWetScratch();
 
       SetBypassed(true);
-      PassThroughBuffers((sample) 0.0, numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples, numInChannels);
       copyDryScratch();
     }
     else if (bypassChanged && !bypass)
     {
-      PassThroughBuffers((sample) 0.0, numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples, numInChannels);
       copyDryScratch();
 
       SetBypassed(false);
@@ -458,7 +458,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       ProcessBuffers((sample) 0.0, numSamples);
       copyWetScratch();
 
-      PassThroughBuffers((sample) 0.0, numSamples);
+      PassThroughBuffers((sample) 0.0, numSamples, numInChannels);
       copyDryScratch();
     }
 
@@ -511,7 +511,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
         ProcessWhileBypassed(GetScratchData(ERoute::kInput), numSamples);
       },
       [&]() {
-        PassThroughBuffers(0.0f, numSamples);
+        PassThroughBuffers(0.0f, numSamples, numInChannels);
       });
     LEAVE_PARAMS_MUTEX
     mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
@@ -565,7 +565,8 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     ProcessBuffers(0.0f, numSamples);
     // Keep the dry latency line in sync while the wet path is active so
     // host-driven wet/dry bypass fades do not pick up stale delayed input.
-    PassThroughBuffers(PLUG_SAMPLE_DST(0.), numSamples);
+    PassThroughBuffers(
+      PLUG_SAMPLE_DST(0.), numSamples, numInChannels);
     LEAVE_PARAMS_MUTEX
     mMeterLevelOut = GetOutputBufferMaxValue(pRenderInfo, numSamples);
     *pRenderInfo->mMeters[0] = fmax(mMeterLevelIn, *pRenderInfo->mMeters[0]);
