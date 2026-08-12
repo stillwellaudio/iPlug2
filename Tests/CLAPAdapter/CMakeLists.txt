@@ -10,8 +10,8 @@ else()
 endif()
 
 set(IPLUG2_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
-set(CLAP_SDK_ROOT "${IPLUG2_ROOT}/../../../CLAP_SDK" CACHE PATH "Pinned CLAP SDK root")
-set(CLAP_HELPERS_ROOT "${IPLUG2_ROOT}/../../../CLAP_HELPERS" CACHE PATH "Pinned clap-helpers root")
+set(CLAP_SDK_ROOT "${IPLUG2_ROOT}/../CLAP_SDK" CACHE PATH "Pinned CLAP SDK root")
+set(CLAP_HELPERS_ROOT "${IPLUG2_ROOT}/../CLAP_HELPERS" CACHE PATH "Pinned clap-helpers root")
 
 add_executable(iplug_clap_adapter_tests
   CLAPAdapterPlugin.cpp
