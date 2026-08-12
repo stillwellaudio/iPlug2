@@ -310,7 +310,7 @@ void BundleResourcePath(WDL_String& path, void* pExtra)
   if (!ModuleFilePath(symbol, modulePath))
     return;
 
-  const auto resourcePath = linux_paths::VST3ResourcePathFromModule(modulePath);
+  const auto resourcePath = linux_paths::PluginResourcePathFromModule(modulePath);
   path.Set(resourcePath.c_str());
 }
 

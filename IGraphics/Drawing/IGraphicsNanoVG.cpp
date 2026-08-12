@@ -540,6 +540,9 @@ void IGraphicsNanoVG::EndFrame()
 
 void IGraphicsNanoVG::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int srcX, int srcY, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   APIBitmap* pAPIBitmap = bitmap.GetAPIBitmap();
   
   assert(pAPIBitmap);

@@ -49,6 +49,27 @@ inline std::string VST3ResourcePathFromModule(const std::filesystem::path& modul
   return result;
 }
 
+inline std::string CLAPResourcePathFromModule(const std::filesystem::path& modulePath)
+{
+  if (modulePath.extension() != ".clap")
+    return {};
+
+  auto result = modulePath.parent_path()
+    / (modulePath.stem().string() + ".resources");
+  auto resourcePath = result.lexically_normal().string();
+  resourcePath.push_back('/');
+  return resourcePath;
+}
+
+inline std::string PluginResourcePathFromModule(const std::filesystem::path& modulePath)
+{
+  auto resourcePath = VST3ResourcePathFromModule(modulePath);
+  if (!resourcePath.empty())
+    return resourcePath;
+
+  return CLAPResourcePathFromModule(modulePath);
+}
+
 inline std::string ResolveXDGPath(
   const char* configuredPath, const char* homePath, const char* fallbackRelativePath)
 {

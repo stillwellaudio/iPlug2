@@ -26,25 +26,30 @@ void ExpectEmpty(const std::string& actual, const char* label)
   ExpectEqual(actual, {}, label);
 }
 
-void TestVST3ResourcePath()
+void TestPluginResourcePath()
 {
   ExpectEqual(
-    VST3ResourcePathFromModule(
+    PluginResourcePathFromModule(
       "/opt/Stillwell/Event Horizon.vst3/Contents/x86_64-linux/eventhorizon.so"),
     "/opt/Stillwell/Event Horizon.vst3/Contents/Resources/",
     "VST3 resource path");
 
   ExpectEmpty(
-    VST3ResourcePathFromModule("/opt/Stillwell/eventhorizon.so"),
+    PluginResourcePathFromModule("/opt/Stillwell/eventhorizon.so"),
     "non-bundle module path");
   ExpectEmpty(
-    VST3ResourcePathFromModule(
+    PluginResourcePathFromModule(
       "/opt/Stillwell/Event Horizon.vst3/Other/x86_64-linux/eventhorizon.so"),
     "non-Contents bundle path");
   ExpectEmpty(
-    VST3ResourcePathFromModule(
+    PluginResourcePathFromModule(
       "/opt/Stillwell/Event Horizon.vst3/Contents/x86_64-win/eventhorizon.so"),
     "non-Linux architecture directory");
+
+  ExpectEqual(
+    PluginResourcePathFromModule("/home/tester/.clap/eventhorizon.clap"),
+    "/home/tester/.clap/eventhorizon.resources/",
+    "CLAP adjacent resource path");
 }
 
 void TestXDGPaths()
@@ -91,12 +96,30 @@ void TestResourceLookup()
   fs::remove_all(root, error);
 }
 
+void TestCLAPResourceLookup()
+{
+  const fs::path root = fs::temp_directory_path() / "iplug-clap-resources-test";
+  std::error_code error;
+  fs::remove_all(root, error);
+  fs::create_directories(root / "eventhorizon.resources");
+  std::ofstream(root / "eventhorizon.resources" / "eh_bg.png") << "fixture";
+
+  const auto resourceDirectory = PluginResourcePathFromModule(root / "eventhorizon.clap");
+  ExpectEqual(
+    FindResource(resourceDirectory, "eh_bg.png"),
+    (root / "eventhorizon.resources" / "eh_bg.png").string(),
+    "CLAP background resource lookup");
+
+  fs::remove_all(root, error);
+}
+
 } // namespace
 
 int main()
 {
-  TestVST3ResourcePath();
+  TestPluginResourcePath();
   TestXDGPaths();
   TestResourceLookup();
+  TestCLAPResourceLookup();
   return gFailures == 0 ? 0 : 1;
 }

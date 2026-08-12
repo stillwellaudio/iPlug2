@@ -606,6 +606,9 @@ void IGraphicsSkia::EndFrame()
 
 void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int srcX, int srcY, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   SkPaint p;
   
   p.setAntiAlias(true);
