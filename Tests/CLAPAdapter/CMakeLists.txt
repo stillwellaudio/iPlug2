@@ -50,6 +50,8 @@ if(APPLE)
     "-framework CoreFoundation"
     "-framework Foundation"
   )
+elseif(WIN32)
+  target_link_libraries(iplug_clap_adapter_tests PRIVATE Shlwapi)
 elseif(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(iplug_clap_adapter_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
