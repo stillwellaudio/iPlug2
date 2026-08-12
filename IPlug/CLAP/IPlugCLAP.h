@@ -173,12 +173,12 @@ private:
   bool guiAdjustSize(uint32_t* pWidth, uint32_t* pHeight) noexcept override;
   bool guiSetSize(uint32_t width, uint32_t height) noexcept override;
 
-  // clap_plugin_gui_cocoa/win32
+  // clap_plugin_gui platform window support
   bool guiIsApiSupported(const char* api, bool isFloating) noexcept override;
   bool guiSetParent(const clap_window* pWindow) noexcept override;
   
   // Helper to attach GUI Windows
-  bool GUIWindowAttach(void* parent) noexcept;
+  virtual bool GUIWindowAttach(void* parent) noexcept;
 
   // Parameter flushing from GUI
   void FlushParamsIfNeeded();

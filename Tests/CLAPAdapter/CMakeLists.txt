@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(IPlugCLAPAdapterTests LANGUAGES C CXX OBJCXX)
+project(IPlugCLAPAdapterTests LANGUAGES C CXX)
+
+if(APPLE)
+  enable_language(OBJCXX)
+  set(IPLUG_PATHS_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../IPlug/IPlugPaths.mm")
+else()
+  set(IPLUG_PATHS_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../IPlug/IPlugPaths.cpp")
+endif()
 
 set(IPLUG2_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(CLAP_SDK_ROOT "${IPLUG2_ROOT}/../../../CLAP_SDK" CACHE PATH "Pinned CLAP SDK root")
@@ -15,7 +22,7 @@ add_executable(iplug_clap_adapter_tests
   ${IPLUG2_ROOT}/IPlug/IPlugPluginBase.cpp
   ${IPLUG2_ROOT}/IPlug/IPlugProcessor.cpp
   ${IPLUG2_ROOT}/IPlug/IPlugTimer.cpp
-  ${IPLUG2_ROOT}/IPlug/IPlugPaths.mm
+  ${IPLUG_PATHS_SOURCE}
 )
 
 target_compile_features(iplug_clap_adapter_tests PRIVATE cxx_std_17)
@@ -41,6 +48,9 @@ if(APPLE)
     "-framework CoreFoundation"
     "-framework Foundation"
   )
+elseif(UNIX)
+  find_package(Threads REQUIRED)
+  target_link_libraries(iplug_clap_adapter_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 
 enable_testing()

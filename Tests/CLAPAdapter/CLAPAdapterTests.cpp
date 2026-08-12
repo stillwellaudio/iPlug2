@@ -8,6 +8,11 @@
 
 extern const clap_plugin_entry_t clap_entry;
 extern "C" void TriggerCLAPAdapterParamChange();
+#if defined OS_LINUX
+extern "C" bool CLAPAdapterGuiApiSupported(const char* api, bool isFloating);
+extern "C" bool CLAPAdapterSetX11Parent(uint64_t parent);
+extern "C" uintptr_t CLAPAdapterLastParent();
+#endif
 
 namespace
 {
@@ -190,6 +195,17 @@ void TestAudioPortsStateAndFactoryValidation()
   const clap_plugin_t* plugin = factory->create_plugin(factory, &host, descriptor->id);
   CHECK(plugin != nullptr);
   CHECK(plugin && plugin->init(plugin));
+
+#if defined OS_LINUX
+  CHECK(CLAPAdapterGuiApiSupported(CLAP_WINDOW_API_X11, false));
+  CHECK(!CLAPAdapterGuiApiSupported(CLAP_WINDOW_API_X11, true));
+  CHECK(!CLAPAdapterGuiApiSupported("wayland", false));
+  CHECK(!CLAPAdapterGuiApiSupported(nullptr, false));
+
+  constexpr uint64_t kParent = UINT64_C(0x12345678abcdef01);
+  CHECK(CLAPAdapterSetX11Parent(kParent));
+  CHECK(CLAPAdapterLastParent() == static_cast<uintptr_t>(kParent));
+#endif
 
   const auto* params = static_cast<const clap_plugin_params_t*>(plugin->get_extension(plugin, CLAP_EXT_PARAMS));
   CHECK(params != nullptr);

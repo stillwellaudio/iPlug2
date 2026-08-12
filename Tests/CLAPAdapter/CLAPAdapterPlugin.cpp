@@ -7,6 +7,9 @@ using namespace iplug;
 namespace
 {
 CLAPAdapterPlugin* gLastPlugin = nullptr;
+#if defined OS_LINUX
+uintptr_t gLastParent = 0;
+#endif
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
@@ -22,6 +25,32 @@ extern "C" void TriggerCLAPAdapterParamChange()
   if (gLastPlugin)
     gLastPlugin->InformHostOfParamChange(0, 0.5);
 }
+
+#if defined OS_LINUX
+extern "C" bool CLAPAdapterGuiApiSupported(const char* api, bool isFloating)
+{
+  return gLastPlugin && gLastPlugin->guiIsApiSupported(api, isFloating);
+}
+
+extern "C" bool CLAPAdapterSetX11Parent(uint64_t parent)
+{
+  clap_window window {};
+  window.api = CLAP_WINDOW_API_X11;
+  window.x11 = parent;
+  return gLastPlugin && gLastPlugin->guiSetParent(&window);
+}
+
+extern "C" uintptr_t CLAPAdapterLastParent()
+{
+  return gLastParent;
+}
+
+bool CLAPAdapterPlugin::GUIWindowAttach(void* parent) noexcept
+{
+  gLastParent = reinterpret_cast<uintptr_t>(parent);
+  return true;
+}
+#endif
 
 void CLAPAdapterPlugin::ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames)
 {
