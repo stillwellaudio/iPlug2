@@ -20,6 +20,7 @@
 
 #undef None
 #undef Complex
+#undef NotUseful
 #undef Bool
 #undef CurrentTime
 
