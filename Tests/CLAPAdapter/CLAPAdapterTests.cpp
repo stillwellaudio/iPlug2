@@ -14,6 +14,7 @@ namespace
 int gFailures = 0;
 int gFlushRequests = 0;
 int gCallbackRequests = 0;
+int gRescanRequests = 0;
 
 #define CHECK(condition) \
   do \
@@ -29,7 +30,11 @@ const void* HostGetExtension(const clap_host_t*, const char* extensionId);
 void HostRequestRestart(const clap_host_t*) {}
 void HostRequestProcess(const clap_host_t*) {}
 void HostRequestCallback(const clap_host_t*) { ++gCallbackRequests; }
-void HostParamsRescan(const clap_host_t*, clap_param_rescan_flags) {}
+void HostParamsRescan(const clap_host_t*, clap_param_rescan_flags flags)
+{
+  if (flags & CLAP_PARAM_RESCAN_VALUES)
+    ++gRescanRequests;
+}
 void HostParamsClear(const clap_host_t*, clap_id, clap_param_clear_flags) {}
 void HostParamsRequestFlush(const clap_host_t*) { ++gFlushRequests; }
 
@@ -259,6 +264,7 @@ void TestAudioPortsStateAndFactoryValidation()
 
   MemoryInput shortReads(saved.bytes, 3);
   CHECK(state && state->load(plugin, &shortReads.stream));
+  CHECK(gRescanRequests > 0);
 
   MemoryOutput shortWrite(1);
   CHECK(state && state->save(plugin, &shortWrite.stream));

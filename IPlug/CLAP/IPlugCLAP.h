@@ -209,7 +209,8 @@ private:
   bool mGUIOpen = false;
 };
 
-IPlugCLAP* MakePlug(const InstanceInfo& info);
+class Plugin;
+Plugin* MakePlug(const InstanceInfo& info);
 
 END_IPLUG_NAMESPACE
 

@@ -77,7 +77,15 @@
 #endif
 
 BEGIN_IPLUG_NAMESPACE
+#ifdef CLAP_API
+class Plugin : public PLUGIN_API_BASE
+{
+public:
+  using PLUGIN_API_BASE::PLUGIN_API_BASE;
+};
+#else
 using Plugin = PLUGIN_API_BASE;
+#endif
 END_IPLUG_NAMESPACE
 
 #ifdef OS_WIN

@@ -10,7 +10,7 @@ CLAPAdapterPlugin* gLastPlugin = nullptr;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
-  : iplug::Plugin(info, MakeConfig(1, 1))
+  : Plugin(info, MakeConfig(1, 1))
 {
   gLastPlugin = this;
   GetParam(0)->InitDouble("Gain", 1.0, 0.0, 1.0, 0.01);
