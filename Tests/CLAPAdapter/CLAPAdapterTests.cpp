@@ -12,6 +12,7 @@ extern "C" void TriggerCLAPAdapterParamChange();
 extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
+extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds);
 #endif
 
 namespace
@@ -217,6 +218,7 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(gui && !gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, true));
   CHECK(gui && !gui->is_api_supported(plugin, "wayland", false));
   CHECK(gui && !gui->is_api_supported(plugin, nullptr, false));
+  CHECK(gui && gui->create(plugin, CLAP_WINDOW_API_X11, false));
 
   constexpr uint64_t kParent = UINT64_C(0x12345678abcdef01);
   clap_window_t window {};
@@ -224,6 +226,16 @@ void TestAudioPortsStateAndFactoryValidation()
   window.x11 = kParent;
   CHECK(gui && gui->set_parent(plugin, &window));
   CHECK(CLAPAdapterLastParent() == static_cast<uintptr_t>(kParent));
+  CHECK(gui && gui->show(plugin));
+  CHECK(gui && gui->hide(plugin));
+
+  CLAPAdapterSetOpenWindowSucceeds(false);
+  CHECK(gui && !gui->show(plugin));
+  CLAPAdapterSetOpenWindowSucceeds(true);
+  CHECK(gui && gui->show(plugin));
+  CHECK(gui && gui->hide(plugin));
+  if (gui)
+    gui->destroy(plugin);
 #endif
 
   const auto* params = static_cast<const clap_plugin_params_t*>(plugin->get_extension(plugin, CLAP_EXT_PARAMS));

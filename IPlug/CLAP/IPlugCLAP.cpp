@@ -947,7 +947,7 @@ bool IPlugCLAP::guiIsApiSupported(const char* api, bool isFloating) noexcept
 
 bool IPlugCLAP::guiSetParent(const clap_window* pWindow) noexcept
 {
-  if (!pWindow)
+  if (!pWindow || !guiIsApiSupported(pWindow->api, false))
     return false;
 
 #if defined OS_MAC
@@ -968,7 +968,7 @@ bool IPlugCLAP::implementsGui() const noexcept
 
 bool IPlugCLAP::guiCreate(const char* api, bool isFloating) noexcept
 {
-  return HasUI();
+  return HasUI() && guiIsApiSupported(api, isFloating);
 }
 
 void IPlugCLAP::guiDestroy() noexcept
@@ -980,15 +980,14 @@ void IPlugCLAP::guiDestroy() noexcept
 
 bool IPlugCLAP::guiShow() noexcept
 {
-  if (HasUI() && !mGUIOpen)
-  {
-    OpenWindow(mWindow);
-    return true;
-  }
-  else
-  {
+  if (!HasUI() || !mWindow)
     return false;
-  }
+
+  if (mGUIOpen)
+    return true;
+
+  mGUIOpen = OpenWindow(mWindow) != nullptr;
+  return mGUIOpen;
 }
 
 bool IPlugCLAP::guiHide() noexcept
@@ -1042,17 +1041,14 @@ bool IPlugCLAP::guiGetSize(uint32_t* pWidth, uint32_t* pHeight) noexcept
 
 bool IPlugCLAP::GUIWindowAttach(void* pWindow) noexcept
 {
-  if (HasUI())
-  {
-    OpenWindow(pWindow);
-    mWindow = pWindow;
-    mGUIOpen = true;
-    return true;
-  }
-  else
-  {
+  if (!HasUI() || !pWindow)
     return false;
-  }
+
+  mWindow = pWindow;
+  mGUIOpen = OpenWindow(mWindow) != nullptr;
+  if (!mGUIOpen)
+    mWindow = nullptr;
+  return mGUIOpen;
 }
 
 bool IPlugCLAP::guiAdjustSize(uint32_t* pWidth, uint32_t* pHeight) noexcept

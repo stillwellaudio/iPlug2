@@ -535,6 +535,7 @@ void* IGraphicsLinux::OpenWindow(void* parent)
   GetDelegate()->OnUIOpen();
   SetAllControlsDirty();
   XFlush(mImpl->display);
+  DeactivateGLContext();
 
   const auto intervalMs = static_cast<uint32_t>(std::max(1, 1000 / std::max(1, FPS())));
   mTimer.reset(Timer::Create([this](Timer&) { OnDisplayTimer(); }, intervalMs));

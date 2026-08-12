@@ -9,6 +9,7 @@ namespace
 CLAPAdapterPlugin* gLastPlugin = nullptr;
 #if defined OS_LINUX
 uintptr_t gLastParent = 0;
+bool gOpenWindowSucceeds = true;
 #endif
 }
 
@@ -38,10 +39,19 @@ extern "C" uintptr_t CLAPAdapterLastParent()
   return gLastParent;
 }
 
-bool CLAPAdapterPlugin::GUIWindowAttach(void* parent) noexcept
+extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds)
+{
+  gOpenWindowSucceeds = succeeds;
+}
+
+void* CLAPAdapterPlugin::OpenWindow(void* parent)
 {
   gLastParent = reinterpret_cast<uintptr_t>(parent);
-  return true;
+  return gOpenWindowSucceeds ? reinterpret_cast<void*>(UINTPTR_MAX) : nullptr;
+}
+
+void CLAPAdapterPlugin::CloseWindow()
+{
 }
 #endif
 
