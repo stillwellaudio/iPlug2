@@ -85,6 +85,11 @@ class IPlugCLAP : public IPlugAPIBase
 public:
   IPlugCLAP(const InstanceInfo& info, const Config& config);
 
+  // clap-helpers exposes log(severity, message) as a public base member. Keep
+  // that helper from hiding the standard math overload in plug-in methods.
+  template <typename T>
+  static auto log(T value) -> decltype(std::log(value)) { return std::log(value); }
+
   // IPlugAPIBase
   void BeginInformHostOfParamChange(int idx) override;
   void InformHostOfParamChange(int idx, double normalizedValue) override;

@@ -24,12 +24,13 @@ extern "C" void TriggerCLAPAdapterParamChange()
 
 void CLAPAdapterPlugin::ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames)
 {
+  const double logProbe = log(1.0);
   const int outputChannels = NOutChansConnected();
   const int inputChannels = NInChansConnected();
 
   for (int channel = 0; channel < outputChannels; ++channel)
   {
     for (int frame = 0; frame < nFrames; ++frame)
-      outputs[channel][frame] = channel < inputChannels ? inputs[channel][frame] : 0.0;
+      outputs[channel][frame] = channel < inputChannels ? inputs[channel][frame] + logProbe : 0.0;
   }
 }
