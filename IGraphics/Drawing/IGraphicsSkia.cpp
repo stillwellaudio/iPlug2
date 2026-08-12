@@ -1,5 +1,6 @@
 #include <cmath>
 #include <map>
+#include <mutex>
 
 #include "IGraphicsSkia.h"
 
