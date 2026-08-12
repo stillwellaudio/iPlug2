@@ -455,7 +455,8 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
   if (bytesRead != 0)
     return false;
       
-  bool restoredOK = UnserializeState(chunk, 0) >= 0;
+  const int restoredPosition = UnserializeState(chunk, 0);
+  const bool restoredOK = restoredPosition >= 0 && restoredPosition == chunk.Size();
   
   if (restoredOK)
   {

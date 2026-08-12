@@ -266,6 +266,11 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(state && state->load(plugin, &shortReads.stream));
   CHECK(gRescanRequests > 0);
 
+  auto stateWithTrailingBytes = saved.bytes;
+  stateWithTrailingBytes.push_back(0xff);
+  MemoryInput trailingBytes(stateWithTrailingBytes, SIZE_MAX);
+  CHECK(state && !state->load(plugin, &trailingBytes.stream));
+
   MemoryOutput shortWrite(1);
   CHECK(state && state->save(plugin, &shortWrite.stream));
   CHECK(shortWrite.bytes == saved.bytes);
