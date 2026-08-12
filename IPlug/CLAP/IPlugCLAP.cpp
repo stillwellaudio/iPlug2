@@ -456,7 +456,7 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
   while ((bytesRead = pStream->read(pStream, buffer, bytesPerBlock)) > 0)
     chunk.PutBytes(buffer, static_cast<int>(bytesRead));
 
-  if (bytesRead != 0)
+  if (bytesRead != 0 || chunk.Size() == 0)
     return false;
       
   const int restoredPosition = UnserializeState(chunk, 0);

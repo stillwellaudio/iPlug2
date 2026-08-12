@@ -28,9 +28,11 @@ add_executable(iplug_clap_adapter_tests
 target_compile_features(iplug_clap_adapter_tests PRIVATE cxx_std_17)
 target_compile_definitions(iplug_clap_adapter_tests PRIVATE
   CLAP_API
+  CLAP_ID_STR="com.stillwellaudio.clapadaptertest"
   IPLUG_DSP=1
   IPLUG_EDITOR=0
   NO_IGRAPHICS
+  NOMINMAX
 )
 target_include_directories(iplug_clap_adapter_tests PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}

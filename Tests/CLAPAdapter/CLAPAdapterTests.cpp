@@ -329,6 +329,10 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(state && state->load(plugin, &shortReads.stream));
   CHECK(gRescanRequests > 0);
 
+  const std::vector<uint8_t> emptyState;
+  MemoryInput empty(emptyState, SIZE_MAX);
+  CHECK(state && !state->load(plugin, &empty.stream));
+
   auto stateWithTrailingBytes = saved.bytes;
   stateWithTrailingBytes.push_back(0xff);
   MemoryInput trailingBytes(stateWithTrailingBytes, SIZE_MAX);

@@ -285,6 +285,9 @@
 #ifndef CLAP_DESCRIPTION
 #define CLAP_DESCRIPTION ""
 #endif
+#ifndef CLAP_ID_STR
+#define CLAP_ID_STR BUNDLE_DOMAIN "." BUNDLE_MFR "." BUNDLE_NAME
+#endif
 #ifndef CLAP_FEATURES
   #if PLUG_TYPE==0
   #define CLAP_FEATURES CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
@@ -337,7 +340,7 @@ static bool clap_init(const char* pluginPath)
   
   gPluginDesc->clap_version = CLAP_VERSION;
 
-  gPluginDesc->id = BUNDLE_DOMAIN "." BUNDLE_MFR "." BUNDLE_NAME;
+  gPluginDesc->id = CLAP_ID_STR;
   gPluginDesc->name = PLUG_NAME;
   gPluginDesc->vendor = PLUG_MFR;
   gPluginDesc->url = PLUG_URL_STR;

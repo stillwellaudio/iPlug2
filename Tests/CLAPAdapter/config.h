@@ -9,9 +9,9 @@
 #define PLUG_COPYRIGHT_STR "Copyright 2026 Stillwell Audio LLC"
 #define PLUG_CLASS_NAME CLAPAdapterPlugin
 
-#define BUNDLE_NAME "clapadaptertest"
-#define BUNDLE_MFR "stillwellaudio"
-#define BUNDLE_DOMAIN "com"
+#define BUNDLE_NAME "ClapAdapterTest"
+#define BUNDLE_MFR "StillwellAudio"
+#define BUNDLE_DOMAIN "Com"
 #define SHARED_RESOURCES_SUBPATH "CLAPAdapterTest"
 
 #define PLUG_CHANNEL_IO "1-1 0-2"
