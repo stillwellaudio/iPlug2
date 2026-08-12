@@ -195,9 +195,20 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(params != nullptr);
   clap_param_info_t paramInfo {};
   CHECK(params && params->get_info(plugin, 0, &paramInfo));
-  CHECK(params && !params->get_info(plugin, 1, &paramInfo));
+  CHECK(params && params->get_info(plugin, 1, &paramInfo));
+  CHECK(params && !params->get_info(plugin, 2, &paramInfo));
   double paramValue = 0.0;
-  CHECK(params && !params->get_value(plugin, 1, &paramValue));
+  CHECK(params && !params->get_value(plugin, 2, &paramValue));
+
+  char initialModeText[CLAP_NAME_SIZE] {};
+  char roundTripModeText[CLAP_NAME_SIZE] {};
+  double parsedModeValue = 0.0;
+  CHECK(params && params->value_to_text(plugin, 1, 0.020202020202020204,
+                                        initialModeText, sizeof(initialModeText)));
+  CHECK(params && params->text_to_value(plugin, 1, initialModeText, &parsedModeValue));
+  CHECK(params && params->value_to_text(plugin, 1, parsedModeValue,
+                                        roundTripModeText, sizeof(roundTripModeText)));
+  CHECK(std::strcmp(initialModeText, roundTripModeText) == 0);
 
   TriggerCLAPAdapterParamChange();
   CHECK(gCallbackRequests > 0);

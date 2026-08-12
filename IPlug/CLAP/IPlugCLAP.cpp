@@ -521,10 +521,12 @@ bool IPlugCLAP::paramsValueToText(clap_id paramIdx, double value, char* display,
 
   const IParam* pParam = GetParam(paramIdx);
   const bool isDoubleType = pParam->Type() == IParam::kTypeDouble;
+  const double constrainedValue = isDoubleType ? pParam->ConstrainNormalized(value)
+                                               : pParam->Constrain(value);
 
   WDL_String str;
   
-  pParam->GetDisplay(value, isDoubleType, str);
+  pParam->GetDisplay(constrainedValue, isDoubleType, str);
   
   // Add Label
   if (CStringHasContents(pParam->GetLabel()))
