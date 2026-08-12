@@ -69,6 +69,9 @@ public:
   /** DisplayFunc allows custom parameter display functions, defined by a lambda matching this signature */
   using DisplayFunc = std::function<void(double, WDL_String&)>;
 
+  /** TextToValueFunc allows custom inverse parsing for parameters with custom display functions. */
+  using TextToValueFunc = std::function<double(const char*)>;
+
 #pragma mark - Shape
 
   /** Base struct for parameter shaping */
@@ -191,8 +194,9 @@ public:
    * @param group The parameter's group
    * @param shape A Parameter::Shape struct that determines the skewing of the parameters values across its range
    * @param unit Used by AudioUnit plugins to determine the appearance of parameters, based on the kind of data they represent
-   * @param displayFunc Custom display function, conforming to DisplayFunc */
-  void InitDouble(const char* name, double defaultVal, double minVal, double maxVal, double step, const char* label = "", int flags = 0, const char* group = "", const Shape& shape = ShapeLinear(), EParamUnit unit = kUnitCustom, DisplayFunc displayFunc = nullptr);
+   * @param displayFunc Custom display function, conforming to DisplayFunc
+   * @param textToValueFunc Custom inverse parser, conforming to TextToValueFunc */
+  void InitDouble(const char* name, double defaultVal, double minVal, double maxVal, double step, const char* label = "", int flags = 0, const char* group = "", const Shape& shape = ShapeLinear(), EParamUnit unit = kUnitCustom, DisplayFunc displayFunc = nullptr, TextToValueFunc textToValueFunc = nullptr);
 
   /** Initialize the parameter as seconds
    * @param name The parameter's name
@@ -340,6 +344,10 @@ public:
   /** Set the function to translate display values
    * @param func A function conforming to DisplayFunc */
   void SetDisplayFunc(DisplayFunc func) { mDisplayFunction = func; }
+
+  /** Set the function to parse display text back to a parameter value
+   * @param func A function conforming to TextToValueFunc */
+  void SetTextToValueFunc(TextToValueFunc func) { mTextToValueFunction = func; }
 
   /** Gets a readable value of the parameter
    * @return double Current value of the parameter */
@@ -527,6 +535,7 @@ private:
   
   std::unique_ptr<Shape> mShape;
   DisplayFunc mDisplayFunction = nullptr;
+  TextToValueFunc mTextToValueFunction = nullptr;
 
   WDL_TypedBuf<DisplayText> mDisplayTexts;
 } WDL_FIXALIGN;
