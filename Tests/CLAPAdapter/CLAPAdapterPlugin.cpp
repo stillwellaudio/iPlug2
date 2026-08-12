@@ -26,6 +26,12 @@ extern "C" void TriggerCLAPAdapterParamChange()
     gLastPlugin->InformHostOfParamChange(0, 0.5);
 }
 
+extern "C" void TriggerCLAPAdapterLatencyChange(int samples)
+{
+  if (gLastPlugin)
+    gLastPlugin->SetLatency(samples);
+}
+
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent()
 {

@@ -209,6 +209,8 @@ private:
   bool mHostHasTail = false;
   bool mTailUpdate = false;
   bool mLatencyUpdate = false;
+  bool mLatencyRestartRequested = false;
+  int mPendingLatency = 0;
   
   void* mWindow = nullptr;
   bool mGUIOpen = false;

@@ -9,6 +9,7 @@
 
 extern const clap_plugin_entry_t clap_entry;
 extern "C" void TriggerCLAPAdapterParamChange();
+extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
 #endif
@@ -19,6 +20,8 @@ int gFailures = 0;
 int gFlushRequests = 0;
 int gCallbackRequests = 0;
 int gRescanRequests = 0;
+int gRestartRequests = 0;
+int gLatencyChanges = 0;
 
 #define CHECK(condition) \
   do \
@@ -31,7 +34,7 @@ int gRescanRequests = 0;
   } while (false)
 
 const void* HostGetExtension(const clap_host_t*, const char* extensionId);
-void HostRequestRestart(const clap_host_t*) {}
+void HostRequestRestart(const clap_host_t*) { ++gRestartRequests; }
 void HostRequestProcess(const clap_host_t*) {}
 void HostRequestCallback(const clap_host_t*) { ++gCallbackRequests; }
 void HostParamsRescan(const clap_host_t*, clap_param_rescan_flags flags)
@@ -48,9 +51,21 @@ const clap_host_params_t kHostParams {
   HostParamsRequestFlush,
 };
 
+void HostLatencyChanged(const clap_host_t*) { ++gLatencyChanges; }
+
+const clap_host_latency_t kHostLatency {
+  HostLatencyChanged,
+};
+
 const void* HostGetExtension(const clap_host_t*, const char* extensionId)
 {
-  return extensionId && std::strcmp(extensionId, CLAP_EXT_PARAMS) == 0 ? &kHostParams : nullptr;
+  if (!extensionId)
+    return nullptr;
+  if (std::strcmp(extensionId, CLAP_EXT_PARAMS) == 0)
+    return &kHostParams;
+  if (std::strcmp(extensionId, CLAP_EXT_LATENCY) == 0)
+    return &kHostLatency;
+  return nullptr;
 }
 
 clap_host_t MakeHost()
@@ -278,7 +293,24 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(latency && latency->get(plugin) == 64);
   CHECK(tail && tail->get(plugin) == 0);
 
-  CHECK(plugin->activate(plugin, 48000.0, 0, 64));
+  CHECK(plugin->activate(plugin, 48000.0, 1, 64));
+  CHECK(plugin->start_processing(plugin));
+  TriggerCLAPAdapterLatencyChange(128);
+  plugin->on_main_thread(plugin);
+  CHECK(gRestartRequests == 1);
+  CHECK(latency && latency->get(plugin) == 64);
+  CHECK(gLatencyChanges == 0);
+
+  TriggerCLAPAdapterLatencyChange(256);
+  plugin->on_main_thread(plugin);
+  CHECK(gRestartRequests == 1);
+  CHECK(latency && latency->get(plugin) == 64);
+
+  plugin->stop_processing(plugin);
+  plugin->deactivate(plugin);
+  CHECK(plugin->activate(plugin, 48000.0, 1, 64));
+  CHECK(latency && latency->get(plugin) == 256);
+  CHECK(gLatencyChanges == 1);
   CHECK(plugin->start_processing(plugin));
   clap_process_t zeroFrames {};
   zeroFrames.frames_count = 0;

@@ -112,20 +112,17 @@ void IPlugCLAP::SetTailSize(int samples)
 
 void IPlugCLAP::SetLatency(int samples)
 {
-  IPlugProcessor::SetLatency(samples);
-  
-  if (GetClapHost().canUseLatency())
+  const int requestedLatency = mLatencyUpdate ? mPendingLatency : GetLatency();
+  if (samples == requestedLatency)
+    return;
+
+  mPendingLatency = samples;
+  mLatencyUpdate = true;
+
+  if (isActive() && !mLatencyRestartRequested)
   {
-    // If active request restart on the main thread (or update the host)
-    if (isActive())
-    {
-      mLatencyUpdate = true;
-      runOnMainThread([&](){ if (!isBeingDestroyed()) GetClapHost().requestRestart(); });
-    }
-    else
-    {
-      runOnMainThread([&](){ if (!isBeingDestroyed()) GetClapHost().latencyChanged(); });
-    }
+    mLatencyRestartRequested = true;
+    runOnMainThread([this](){ if (!isBeingDestroyed()) GetClapHost().requestRestart(); });
   }
 }
 
@@ -162,18 +159,25 @@ bool IPlugCLAP::activate(double sampleRate, uint32_t minFrameCount, uint32_t max
   mHostHasTail = GetClapHost().canUseTail();
   mTailCount = 0;
 
+  if (mLatencyUpdate)
+  {
+    const bool changed = mPendingLatency != GetLatency();
+    if (changed)
+      IPlugProcessor::SetLatency(mPendingLatency);
+
+    mLatencyUpdate = false;
+    mLatencyRestartRequested = false;
+
+    if (changed && GetClapHost().canUseLatency())
+      GetClapHost().latencyChanged();
+  }
+
   return true;
 }
 
 void IPlugCLAP::deactivate() noexcept
 {
   OnActivate(false);
-  
-  if (mLatencyUpdate)
-  {
-    GetClapHost().latencyChanged();
-    mLatencyUpdate = false;
-  }
 
   // TODO - should we clear mTailUpdate here or elsewhere?
 }
