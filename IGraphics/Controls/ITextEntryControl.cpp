@@ -512,19 +512,23 @@ void ITextEntryControl::CalcCursorSizes()
 // see: https://github.com/nothings/stb/issues/6
 float ITextEntryControl::MeasureCharWidth(char16_t c, char16_t nc)
 {
+  IGraphics* pGraphics = GetUI();
+  if (!pGraphics)
+    return 0.f;
+
   IRECT bounds;
 
   if (nc)
   {
     std::string str (StringConvert{}.to_bytes (nc));
-    float ncWidth = GetUI()->MeasureText(mText, str.c_str(), bounds);
+    float ncWidth = pGraphics->MeasureText(mText, str.c_str(), bounds);
     str += StringConvert{}.to_bytes (c);
-    float tcWidth = GetUI()->MeasureText(mText, str.c_str(), bounds);
+    float tcWidth = pGraphics->MeasureText(mText, str.c_str(), bounds);
     return tcWidth - ncWidth;
   }
   
   std::string str (StringConvert{}.to_bytes (c));
-  return GetUI()->MeasureText(mText, str.c_str(), bounds);
+  return pGraphics->MeasureText(mText, str.c_str(), bounds);
 }
 
 void ITextEntryControl::CreateTextEntry(int paramIdx, const IText& text, const IRECT& bounds, int length, const char* str)

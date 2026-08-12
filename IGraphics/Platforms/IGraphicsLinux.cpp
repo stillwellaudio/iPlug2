@@ -354,8 +354,6 @@ IGraphicsLinux::IGraphicsLinux(
 {
   static std::once_flag xlibThreads;
   std::call_once(xlibThreads, [] { XInitThreads(); });
-  AttachPopupMenuControl();
-  AttachTextEntryControl();
 }
 
 IGraphicsLinux::~IGraphicsLinux()
@@ -398,6 +396,12 @@ void* IGraphicsLinux::OpenWindow(void* parent)
 {
   CloseWindow();
   std::lock_guard<std::recursive_mutex> lock(mImpl->mutex);
+
+  // IGEditorDelegate owns this graphics object before OpenWindow() is called.
+  // Attaching special controls here ensures SetDelegate() can bind their UI
+  // pointer; doing it in the constructor is too early for that ownership link.
+  AttachPopupMenuControl();
+  AttachTextEntryControl();
 
   mImpl->display = XOpenDisplay(nullptr);
   if (!mImpl->display)
