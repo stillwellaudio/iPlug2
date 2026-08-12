@@ -15,3 +15,9 @@ target_compile_features(iplug-linux-timer-test PRIVATE cxx_std_17)
 target_include_directories(iplug-linux-timer-test PRIVATE ../..)
 
 add_test(NAME iplug-linux-timer COMMAND iplug-linux-timer-test)
+
+add_executable(iplug-linux-input-test IPlugLinuxInputTest.cpp)
+target_compile_features(iplug-linux-input-test PRIVATE cxx_std_17)
+target_include_directories(iplug-linux-input-test PRIVATE ../..)
+
+add_test(NAME iplug-linux-input COMMAND iplug-linux-input-test)

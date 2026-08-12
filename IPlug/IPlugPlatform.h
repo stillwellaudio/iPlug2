@@ -15,7 +15,9 @@
  * @brief Include to get consistently named preprocessor macros for different platforms and logging functionality
  */
 
-#ifdef _WIN32
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_IOS) || defined(OS_LINUX) || defined(OS_WEB)
+  // Allow an explicit platform for cross-compilation and platform syntax probes.
+#elif defined _WIN32
   #define OS_WIN
 #elif defined __APPLE__
   #include <TargetConditionals.h>
@@ -66,6 +68,6 @@
 
 namespace iplug {namespace igraphics {}};
 
-#if defined IGRAPHICS_GLES2 || IGRAPHICS_GLES3 || IGRAPHICS_GL2 || defined IGRAPHICS_GL3
+#if defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3 || defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
   #define IGRAPHICS_GL
 #endif

@@ -28,6 +28,10 @@
 #include "modules/skshaper/include/SkShaper.h"
 #include "modules/skunicode/include/SkUnicode_icu.h"
 #endif
+
+#if defined OS_LINUX
+#include "include/ports/SkFontMgr_fontconfig.h"
+#endif
 #pragma warning( pop )
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/GrBackendSurface.h"
@@ -76,6 +80,9 @@
   #elif defined OS_WIN
     #include "include/gpu/ganesh/gl/win/GrGLMakeWinInterface.h"
     #pragma comment(lib, "opengl32.lib")
+  #elif defined OS_LINUX
+    #include <glad/glad.h>
+    #include "include/gpu/ganesh/gl/glx/GrGLMakeGLXInterface.h"
   #endif
 
 #endif
@@ -306,6 +313,8 @@ static sk_sp<SkFontMgr> SFontMgrFactory()
   return SkFontMgr_New_CoreText(nullptr);
 #elif defined OS_WIN
   return SkFontMgr_New_DirectWrite();
+#elif defined OS_LINUX
+  return SkFontMgr_New_FontConfig(nullptr);
 #else
   #error "Not supported"
 #endif
@@ -425,6 +434,8 @@ void IGraphicsSkia::OnViewInitialized(void* pContext)
   auto glInterface = GrGLInterfaces::MakeMac();
 #elif defined OS_WIN
   auto glInterface = GrGLInterfaces::MakeWin();
+#elif defined OS_LINUX
+  auto glInterface = GrGLInterfaces::MakeGLX();
 #endif
   mGrContext = GrDirectContexts::MakeGL(glInterface);
 #elif defined IGRAPHICS_METAL
