@@ -1,5 +1,6 @@
 #include <clap/clap.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -9,8 +10,6 @@
 extern const clap_plugin_entry_t clap_entry;
 extern "C" void TriggerCLAPAdapterParamChange();
 #if defined OS_LINUX
-extern "C" bool CLAPAdapterGuiApiSupported(const char* api, bool isFloating);
-extern "C" bool CLAPAdapterSetX11Parent(uint64_t parent);
 extern "C" uintptr_t CLAPAdapterLastParent();
 #endif
 
@@ -197,13 +196,18 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(plugin && plugin->init(plugin));
 
 #if defined OS_LINUX
-  CHECK(CLAPAdapterGuiApiSupported(CLAP_WINDOW_API_X11, false));
-  CHECK(!CLAPAdapterGuiApiSupported(CLAP_WINDOW_API_X11, true));
-  CHECK(!CLAPAdapterGuiApiSupported("wayland", false));
-  CHECK(!CLAPAdapterGuiApiSupported(nullptr, false));
+  const auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
+  CHECK(gui != nullptr);
+  CHECK(gui && gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false));
+  CHECK(gui && !gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, true));
+  CHECK(gui && !gui->is_api_supported(plugin, "wayland", false));
+  CHECK(gui && !gui->is_api_supported(plugin, nullptr, false));
 
   constexpr uint64_t kParent = UINT64_C(0x12345678abcdef01);
-  CHECK(CLAPAdapterSetX11Parent(kParent));
+  clap_window_t window {};
+  window.api = CLAP_WINDOW_API_X11;
+  window.x11 = kParent;
+  CHECK(gui && gui->set_parent(plugin, &window));
   CHECK(CLAPAdapterLastParent() == static_cast<uintptr_t>(kParent));
 #endif
 

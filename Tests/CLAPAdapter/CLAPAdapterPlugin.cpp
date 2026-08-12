@@ -27,19 +27,6 @@ extern "C" void TriggerCLAPAdapterParamChange()
 }
 
 #if defined OS_LINUX
-extern "C" bool CLAPAdapterGuiApiSupported(const char* api, bool isFloating)
-{
-  return gLastPlugin && gLastPlugin->guiIsApiSupported(api, isFloating);
-}
-
-extern "C" bool CLAPAdapterSetX11Parent(uint64_t parent)
-{
-  clap_window window {};
-  window.api = CLAP_WINDOW_API_X11;
-  window.x11 = parent;
-  return gLastPlugin && gLastPlugin->guiSetParent(&window);
-}
-
 extern "C" uintptr_t CLAPAdapterLastParent()
 {
   return gLastParent;
