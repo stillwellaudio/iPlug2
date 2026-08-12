@@ -21,6 +21,7 @@
 #undef None
 #undef Complex
 #undef Bool
+#undef CurrentTime
 
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE

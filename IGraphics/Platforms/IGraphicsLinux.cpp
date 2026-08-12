@@ -8,17 +8,19 @@
  ==============================================================================
 */
 
+#include "IGraphicsLinux.h"
+#include "IGraphicsLinuxInput.h"
+
 #include "glad/glad.h"
+#define Bool int
 #define GLX_GLXEXT_LEGACY
 #include <GL/glx.h>
 #undef GLX_GLXEXT_LEGACY
 
-#include "IGraphicsLinux.h"
-#include "IGraphicsLinuxInput.h"
-
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/cursorfont.h>
+#undef Bool
 
 #include "IControl.h"
 #include "ITextEntryControl.h"
@@ -50,6 +52,7 @@ using namespace iplug::igraphics;
 namespace {
 
 constexpr long kX11None = 0L;
+constexpr Time kX11CurrentTime = 0L;
 
 IMouseMod MouseModifiers(unsigned int state, unsigned int button = 0)
 {
@@ -1236,7 +1239,7 @@ bool IGraphicsLinux::SetTextInClipboard(const char* str)
 
   mImpl->clipboardText.Set(str);
   XSetSelectionOwner(
-    mImpl->display, mImpl->clipboardAtom, mImpl->window, CurrentTime);
+    mImpl->display, mImpl->clipboardAtom, mImpl->window, kX11CurrentTime);
   XFlush(mImpl->display);
   return XGetSelectionOwner(mImpl->display, mImpl->clipboardAtom) == mImpl->window;
 }
@@ -1262,7 +1265,7 @@ bool IGraphicsLinux::GetTextFromClipboard(WDL_String& str)
     mImpl->utf8StringAtom,
     mImpl->iPlugClipboardAtom,
     mImpl->window,
-    CurrentTime);
+    kX11CurrentTime);
   XFlush(mImpl->display);
 
   for (int attempt = 0; attempt < 100; ++attempt)
