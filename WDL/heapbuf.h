@@ -35,6 +35,8 @@
 
 #ifndef WDL_HEAPBUF_IMPL_ONLY
 
+#include <stdlib.h>
+
 #include "wdltypes.h"
 
 class WDL_HeapBuf
