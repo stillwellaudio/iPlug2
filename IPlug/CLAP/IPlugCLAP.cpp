@@ -195,6 +195,10 @@ bool InputIsSilent(const T* data, int nFrames)
 
 clap_process_status IPlugCLAP::process(const clap_process* pProcess) noexcept
 {
+  if (!pProcess || (pProcess->audio_inputs_count && !pProcess->audio_inputs)
+      || (pProcess->audio_outputs_count && !pProcess->audio_outputs))
+    return CLAP_PROCESS_ERROR;
+
   IMidiMsg msg;
   SysExData sysEx;
   
@@ -410,16 +414,35 @@ bool IPlugCLAP::renderSetMode(clap_plugin_render_mode mode) noexcept
 // clap_plugin_state
 bool IPlugCLAP::stateSave(const clap_ostream* pStream) noexcept
 {
+  if (!pStream || !pStream->write)
+    return false;
+
   IByteChunk chunk;
   
   if (!SerializeState(chunk))
     return false;
-  
-  return pStream->write(pStream, chunk.GetData(), chunk.Size()) == chunk.Size();
+
+  int bytesWritten = 0;
+
+  while (bytesWritten < chunk.Size())
+  {
+    const int bytesRemaining = chunk.Size() - bytesWritten;
+    const int64_t result = pStream->write(pStream, chunk.GetData() + bytesWritten, bytesRemaining);
+
+    if (result <= 0 || result > bytesRemaining)
+      return false;
+
+    bytesWritten += static_cast<int>(result);
+  }
+
+  return true;
 }
 
 bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
 {
+  if (!pStream || !pStream->read)
+    return false;
+
   constexpr int bytesPerBlock = 256;
   char buffer[bytesPerBlock];
   int64_t bytesRead = 0;
@@ -432,10 +455,16 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
   if (bytesRead != 0)
     return false;
       
-  bool restoredOK = UnserializeState(chunk, 0) >= 0;
+  const int restoredPosition = UnserializeState(chunk, 0);
+  const bool restoredOK = restoredPosition >= 0 && restoredPosition == chunk.Size();
   
   if (restoredOK)
+  {
     OnRestoreState();
+
+    if (GetClapHost().canUseParams())
+      GetClapHost().paramsRescan(CLAP_PARAM_RESCAN_VALUES);
+  }
   
   return restoredOK;
 }
@@ -443,6 +472,9 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
 // clap_plugin_params
 bool IPlugCLAP::paramsInfo(uint32_t paramIdx, clap_param_info* pInfo) const noexcept
 {
+  if (!pInfo || !isValidParamId(paramIdx))
+    return false;
+
   assert(MAX_PARAM_NAME_LEN <= CLAP_NAME_SIZE && "iPlug parameter name size exceeds CLAP maximum");
   assert(MAX_PARAM_GROUP_LEN <= CLAP_PATH_SIZE && "iPlug group name size exceeds CLAP maximum");
 
@@ -473,6 +505,9 @@ bool IPlugCLAP::paramsInfo(uint32_t paramIdx, clap_param_info* pInfo) const noex
 
 bool IPlugCLAP::paramsValue(clap_id paramIdx, double* pValue) noexcept
 {
+  if (!pValue || !isValidParamId(paramIdx))
+    return false;
+
   const IParam* pParam = GetParam(paramIdx);
   const bool isDoubleType = pParam->Type() == IParam::kTypeDouble;
   *pValue = isDoubleType ? pParam->GetNormalized() : pParam->Value();
@@ -481,12 +516,17 @@ bool IPlugCLAP::paramsValue(clap_id paramIdx, double* pValue) noexcept
 
 bool IPlugCLAP::paramsValueToText(clap_id paramIdx, double value, char* display, uint32_t size) noexcept
 {
+  if (!display || size == 0 || !isValidParamId(paramIdx))
+    return false;
+
   const IParam* pParam = GetParam(paramIdx);
   const bool isDoubleType = pParam->Type() == IParam::kTypeDouble;
+  const double constrainedValue = isDoubleType ? pParam->ConstrainNormalized(value)
+                                               : pParam->Constrain(value);
 
   WDL_String str;
   
-  pParam->GetDisplay(value, isDoubleType, str);
+  pParam->GetDisplay(constrainedValue, isDoubleType, str);
   
   // Add Label
   if (CStringHasContents(pParam->GetLabel()))
@@ -495,7 +535,7 @@ bool IPlugCLAP::paramsValueToText(clap_id paramIdx, double value, char* display,
     str.Append(pParam->GetLabel());
   }
   
-  if (size < str.GetLength())
+  if (size <= static_cast<uint32_t>(str.GetLength()))
     return false;
     
   strcpy(display, str.Get());
@@ -504,6 +544,9 @@ bool IPlugCLAP::paramsValueToText(clap_id paramIdx, double value, char* display,
 
 bool IPlugCLAP::paramsTextToValue(clap_id paramIdx, const char* display, double* pValue) noexcept
 {
+  if (!display || !pValue || !isValidParamId(paramIdx))
+    return false;
+
   const IParam* pParam = GetParam(paramIdx);
   const bool isDoubleType = pParam->Type() == IParam::kTypeDouble;
   const double paramValue = pParam->StringToValue(display);
@@ -524,17 +567,24 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
 
   if (pInputEvents)
   {
-    for (int i = 0; i < pInputEvents->size(pInputEvents); i++)
+    if (!pInputEvents->size || !pInputEvents->get)
+      return;
+
+    for (uint32_t i = 0; i < pInputEvents->size(pInputEvents); i++)
     {
       auto pEvent = pInputEvents->get(pInputEvents, i);
-      
-      if (pEvent->space_id != CLAP_CORE_EVENT_SPACE_ID)
+
+      if (!pEvent || pEvent->size < sizeof(clap_event_header_t)
+          || pEvent->space_id != CLAP_CORE_EVENT_SPACE_ID)
         continue;
       
       switch (pEvent->type)
       {
         case CLAP_EVENT_NOTE_ON:
         {
+          if (pEvent->size < sizeof(clap_event_note))
+            break;
+
           // N.B. velocity stored 0-1
           auto pNote = ClapEventCast<clap_event_note>(pEvent);
           auto velocity = static_cast<int>(std::round(pNote->velocity * 127.0));
@@ -546,6 +596,9 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
           
         case CLAP_EVENT_NOTE_OFF:
         {
+          if (pEvent->size < sizeof(clap_event_note))
+            break;
+
           auto pNote = ClapEventCast<clap_event_note>(pEvent);
           msg.MakeNoteOffMsg(pNote->key, pEvent->time, pNote->channel);
           ProcessMidiMsg(msg);
@@ -555,6 +608,9 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
           
         case CLAP_EVENT_MIDI:
         {
+          if (pEvent->size < sizeof(clap_event_midi))
+            break;
+
           auto pMidiEvent = ClapEventCast<clap_event_midi>(pEvent);
           msg = IMidiMsg(pEvent->time, pMidiEvent->data[0], pMidiEvent->data[1], pMidiEvent->data[2]);
           ProcessMidiMsg(msg);
@@ -564,7 +620,14 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
           
         case CLAP_EVENT_MIDI_SYSEX:
         {
+          if (pEvent->size < sizeof(clap_event_midi_sysex))
+            break;
+
           auto pSysexEvent = ClapEventCast<clap_event_midi_sysex>(pEvent);
+
+          if (!pSysexEvent->buffer && pSysexEvent->size > 0)
+            break;
+
           ISysEx sysEx(pEvent->time, pSysexEvent->buffer, pSysexEvent->size);
           ProcessSysEx(sysEx);
           mSysExDataFromProcessor.PushFromArgs(sysEx.mOffset, sysEx.mSize, sysEx.mData);
@@ -573,10 +636,16 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
           
         case CLAP_EVENT_PARAM_VALUE:
         {
+          if (pEvent->size < sizeof(clap_event_param_value))
+            break;
+
           auto pParamValue = ClapEventCast<clap_event_param_value>(pEvent);
           
           int paramIdx = pParamValue->param_id;
           double value = pParamValue->value;
+
+          if (!isValidParamId(pParamValue->param_id))
+            break;
           
           IParam* pParam = GetParam(paramIdx);
           const bool isDoubleType = pParam->Type() == IParam::kTypeDouble;
@@ -600,6 +669,9 @@ void IPlugCLAP::ProcessInputEvents(const clap_input_events* pInputEvents) noexce
   
 void IPlugCLAP::ProcessOutputParams(const clap_output_events* pOutputParamChanges) noexcept
 {
+  if (!pOutputParamChanges || !pOutputParamChanges->try_push)
+    return;
+
   ParamToHost change;
   
   while (mParamValuesToHost.Pop(change))
@@ -734,6 +806,9 @@ uint32_t IPlugCLAP::audioPortsCount(bool isInput) const noexcept
 
 bool IPlugCLAP::audioPortsInfo(uint32_t index, bool isInput, clap_audio_port_info* pInfo) const noexcept
 {
+  if (!pInfo || index >= audioPortsCount(isInput))
+    return false;
+
   // TODO - should we use in place pairs?
   WDL_String busName;
 
@@ -768,7 +843,7 @@ uint32_t IPlugCLAP::audioPortsConfigCount() const noexcept
 
 bool IPlugCLAP::audioPortsGetConfig(uint32_t index, clap_audio_ports_config* pConfig) const noexcept
 {
-  if (index >= audioPortsConfigCount())
+  if (!pConfig || index >= audioPortsConfigCount())
     return false;
   
   WDL_String configName;
@@ -798,12 +873,12 @@ bool IPlugCLAP::audioPortsGetConfig(uint32_t index, clap_audio_ports_config* pCo
   pConfig->input_port_count = static_cast<uint32_t>(NBuses(kInput, index));
   pConfig->output_port_count = static_cast<uint32_t>(NBuses(kOutput, index));
 
-  pConfig->has_main_input = pConfig->input_port_count > 1;
+  pConfig->has_main_input = pConfig->input_port_count > 0;
   pConfig->main_input_channel_count = pConfig->has_main_input ? getNChans(kInput, 0) : 0;
   pConfig->main_input_port_type = ClapPortType(pConfig->main_input_channel_count);
   
-  pConfig->has_main_output = pConfig->output_port_count > 1;
-  pConfig->main_output_channel_count = pConfig->has_main_input ? getNChans(kOutput, 0) : 0;
+  pConfig->has_main_output = pConfig->output_port_count > 0;
+  pConfig->main_output_channel_count = pConfig->has_main_output ? getNChans(kOutput, 0) : 0;
   pConfig->main_output_port_type = ClapPortType(pConfig->main_output_channel_count);
 
   return true;
@@ -829,6 +904,9 @@ uint32_t IPlugCLAP::notePortsCount(bool isInput) const noexcept
 
 bool IPlugCLAP::notePortsInfo(uint32_t index, bool isInput, clap_note_port_info* pInfo) const noexcept
 {
+  if (!pInfo || index >= notePortsCount(isInput))
+    return false;
+
   if (isInput)
   {
     pInfo->id = index;
@@ -849,6 +927,9 @@ bool IPlugCLAP::notePortsInfo(uint32_t index, bool isInput, clap_note_port_info*
 // clap_plugin_gui
 bool IPlugCLAP::guiIsApiSupported(const char* api, bool isFloating) noexcept
 {
+  if (!api)
+    return false;
+
 #if defined OS_MAC
   return !isFloating && !strcmp(api, CLAP_WINDOW_API_COCOA);
 #elif defined OS_WIN
@@ -860,6 +941,9 @@ bool IPlugCLAP::guiIsApiSupported(const char* api, bool isFloating) noexcept
 
 bool IPlugCLAP::guiSetParent(const clap_window* pWindow) noexcept
 {
+  if (!pWindow)
+    return false;
+
 #if defined OS_MAC
   return GUIWindowAttach(pWindow->cocoa);
 #elif defined OS_WIN
