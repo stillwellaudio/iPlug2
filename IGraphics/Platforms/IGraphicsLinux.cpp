@@ -9,15 +9,16 @@
 */
 
 #include "glad/glad.h"
+#define GLX_GLXEXT_LEGACY
+#include <GL/glx.h>
+#undef GLX_GLXEXT_LEGACY
+
 #include "IGraphicsLinux.h"
 #include "IGraphicsLinuxInput.h"
 
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/cursorfont.h>
-#define GLX_GLXEXT_LEGACY
-#include <GL/glx.h>
-#undef GLX_GLXEXT_LEGACY
 
 #include "IControl.h"
 #include "ITextEntryControl.h"
