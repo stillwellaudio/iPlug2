@@ -271,6 +271,9 @@
 #pragma mark - CLAP
 #elif defined CLAP_API
 
+#include <mutex>
+#include <new>
+
 // Make sure optional fields are defined
 
 #ifndef CLAP_MANUAL_URL
@@ -294,13 +297,41 @@
 
 std::string gPluginPath;
 std::unique_ptr<clap_plugin_descriptor> gPluginDesc;
+std::mutex gClapEntryMutex;
+uint32_t gClapEntryInitCount = 0;
 
 static bool clap_init(const char* pluginPath)
 {
-  // Init globals
-  
-  gPluginPath = pluginPath;
-  gPluginDesc = std::unique_ptr<clap_plugin_descriptor>(new clap_plugin_descriptor());
+  if (!pluginPath || !pluginPath[0])
+    return false;
+
+  std::lock_guard<std::mutex> lock(gClapEntryMutex);
+
+  if (gClapEntryInitCount > 0)
+  {
+    if (gPluginPath != pluginPath)
+      return false;
+
+    ++gClapEntryInitCount;
+    return true;
+  }
+
+  try
+  {
+    gPluginPath = pluginPath;
+  }
+  catch (...)
+  {
+    return false;
+  }
+
+  gPluginDesc = std::unique_ptr<clap_plugin_descriptor>(new (std::nothrow) clap_plugin_descriptor());
+
+  if (!gPluginDesc)
+  {
+    gPluginPath.clear();
+    return false;
+  }
   
   // Init the descriptor
   
@@ -318,14 +349,25 @@ static bool clap_init(const char* pluginPath)
   
   static const char *clap_features[] = { CLAP_FEATURES, NULL };
   gPluginDesc->features = clap_features;
-  
+
+  gClapEntryInitCount = 1;
   return true;
 }
 
 static void clap_deinit(void)
 {
-  gPluginPath.clear();
-  gPluginDesc = nullptr;
+  std::lock_guard<std::mutex> lock(gClapEntryMutex);
+
+  if (gClapEntryInitCount == 0)
+    return;
+
+  --gClapEntryInitCount;
+
+  if (gClapEntryInitCount == 0)
+  {
+    gPluginPath.clear();
+    gPluginDesc = nullptr;
+  }
 }
 
 static uint32_t clap_get_plugin_count(const clap_plugin_factory_t *factory)
@@ -335,7 +377,9 @@ static uint32_t clap_get_plugin_count(const clap_plugin_factory_t *factory)
 
 static const clap_plugin_descriptor* clap_get_plugin_descriptor(const clap_plugin_factory_t *factory, uint32_t index)
 {
-  if (!index)
+  std::lock_guard<std::mutex> lock(gClapEntryMutex);
+
+  if (!index && gClapEntryInitCount > 0)
     return gPluginDesc.get();
   
   return nullptr;
@@ -343,6 +387,14 @@ static const clap_plugin_descriptor* clap_get_plugin_descriptor(const clap_plugi
 
 static const clap_plugin* clap_create_plugin(const clap_plugin_factory_t *factory, const clap_host* host, const char* plugin_id)
 {
+  std::lock_guard<std::mutex> lock(gClapEntryMutex);
+
+  if (!host || !plugin_id || !gPluginDesc || gClapEntryInitCount == 0)
+    return nullptr;
+
+  if (!clap_version_is_compatible(host->clap_version))
+    return nullptr;
+
   if (!strcmp(gPluginDesc->id, plugin_id))
   {
     IPlugCLAP* pPlug = MakePlug(InstanceInfo{gPluginDesc.get(), host});
@@ -360,7 +412,9 @@ CLAP_EXPORT const clap_plugin_factory_t clap_factory = {
 
 const void *clap_get_factory(const char *factory_id)
 {
-   if (!::strcmp(factory_id, CLAP_PLUGIN_FACTORY_ID))
+   std::lock_guard<std::mutex> lock(gClapEntryMutex);
+
+   if (gClapEntryInitCount > 0 && factory_id && !::strcmp(factory_id, CLAP_PLUGIN_FACTORY_ID))
       return &clap_factory;
     
    return nullptr;
