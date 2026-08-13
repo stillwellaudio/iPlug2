@@ -41,6 +41,8 @@
       #elif defined IGRAPHICS_GL3
         #include <OpenGL/gl3.h>
       #endif
+    #elif defined OS_LINUX
+      #include <glad/glad.h>
     #else
       #include <OpenGL/gl.h>
     #endif
@@ -62,4 +64,3 @@ BEGIN_IGRAPHICS_NAMESPACE
 using IGRAPHICS_DRAW_CLASS = IGRAPHICS_DRAW_CLASS_TYPE;
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE
-

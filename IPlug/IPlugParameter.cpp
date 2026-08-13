@@ -137,7 +137,7 @@ void IParam::InitInt(const char* name, int defaultVal, int minVal, int maxVal, c
   InitDouble(name, (double) defaultVal, (double) minVal, (double) maxVal, 1.0, label, flags | kFlagStepped, group);
 }
 
-void IParam::InitDouble(const char* name, double defaultVal, double minVal, double maxVal, double step, const char* label, int flags, const char* group, const Shape& shape, EParamUnit unit, DisplayFunc displayFunc)
+void IParam::InitDouble(const char* name, double defaultVal, double minVal, double maxVal, double step, const char* label, int flags, const char* group, const Shape& shape, EParamUnit unit, DisplayFunc displayFunc, TextToValueFunc textToValueFunc)
 {
   if (mType == kTypeNone) mType = kTypeDouble;
   
@@ -156,6 +156,7 @@ void IParam::InitDouble(const char* name, double defaultVal, double minVal, doub
   mUnit = unit;
   mFlags = flags;
   mDisplayFunction = displayFunc;
+  mTextToValueFunction = textToValueFunc;
 
   Set(defaultVal);
   
@@ -235,7 +236,7 @@ void IParam::Init(const IParam& p, const char* searchStr, const char* replaceStr
     group.Set(newGroup);
   }
   
-  InitDouble(str.Get(), p.mDefault, p.mMin, p.mMax, p.mStep, p.mLabel, p.mFlags, group.Get(), *p.mShape, p.mUnit, p.mDisplayFunction);
+  InitDouble(str.Get(), p.mDefault, p.mMin, p.mMax, p.mStep, p.mLabel, p.mFlags, group.Get(), *p.mShape, p.mUnit, p.mDisplayFunction, p.mTextToValueFunction);
   
   for (auto i=0; i<p.NDisplayTexts(); i++)
   {
@@ -357,6 +358,9 @@ bool IParam::MapDisplayText(const char* str, double* pValue) const
 
 double IParam::StringToValue(const char* str) const
 {
+  if (mTextToValueFunction != nullptr)
+    return Constrain(mTextToValueFunction(str));
+
   double v = 0.;
   bool mapped = (bool) NDisplayTexts();
 
@@ -439,4 +443,3 @@ double IParam::GetShapeValue() const
   else
     return 0.0;
 }
-

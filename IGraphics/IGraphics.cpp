@@ -288,7 +288,11 @@ void IGraphics::DeleteFromPopupMenu(IPopupMenu* pMenu, int itemIdx)
 
 void IGraphics::AttachBackground(const char* fileName)
 {
-  IControl* pBG = new IBitmapControl(0, 0, LoadBitmap(fileName, 1, false), kNoParameter, EBlend::Default);
+  const IBitmap bitmap = LoadBitmap(fileName, 1, false);
+  if (!bitmap.IsValid())
+    return;
+
+  IControl* pBG = new IBitmapControl(0, 0, bitmap, kNoParameter, EBlend::Default);
   pBG->SetDelegate(*GetDelegate());
   mControls.Insert(0, pBG);
 }
@@ -705,6 +709,9 @@ void IGraphics::DrawText(const IText& text, const char* str, float x, float y, c
 
 void IGraphics::DrawBitmap(const IBitmap& bitmap, const IRECT& bounds, int bmpState, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   int srcX = 0;
   int srcY = 0;
 
@@ -1820,8 +1827,8 @@ IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHoriz
       }
     }
 
-    // Protection from searching for non-existent bitmaps (e.g. typos in config.h or .rc)
-    assert(pAPIBitmap && "Bitmap not found");
+    if (!pAPIBitmap)
+      return IBitmap();
 
     // Scale or retain if needed (N.B. - scaling retains in the cache)
     if (pAPIBitmap->GetScale() != targetScale)
@@ -2212,7 +2219,7 @@ void IGraphics::ApplyLayerDropShadow(ILayerPtr& layer, const IShadow& shadow)
   kernel.Resize(iSize);
         
   for (int i = 0; i < iSize; i++)
-    kernel.Get()[i] = static_cast<uint8_t>(std::round(255.f * std::expf(-(i * i) * blurConst)));
+    kernel.Get()[i] = static_cast<uint8_t>(std::round(255.f * std::exp(-(i * i) * blurConst)));
   
   // Kernel normalisation
   int normFactor = kernel.Get()[0];
@@ -2457,6 +2464,9 @@ void IGraphics::ClearGestureRegions()
 
 void IGraphics::DrawRotatedBitmap(const IBitmap& bitmap, float destCtrX, float destCtrY, double angle, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   float width = bitmap.W() / bitmap.GetDrawScale();
   float height = bitmap.H() / bitmap.GetDrawScale();
   
@@ -2832,6 +2842,9 @@ void IGraphics::PathClipRegion(const IRECT r)
 
 void IGraphics::DrawFittedBitmap(const IBitmap& bitmap, const IRECT& bounds, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   PathTransformSave();
   PathTransformTranslate(bounds.L, bounds.T);
   IRECT newBounds(0., 0., static_cast<float>(bitmap.W()), static_cast<float>(bitmap.H()));

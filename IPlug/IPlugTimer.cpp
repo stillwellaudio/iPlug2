@@ -143,4 +143,27 @@ void Timer_impl::TimerProc(void* userData)
   Timer_impl* itimer = (Timer_impl*) userData;
   itimer->mTimerFunc(*itimer);
 }
+#elif defined OS_LINUX
+Timer* Timer::Create(ITimerFunction func, uint32_t intervalMs)
+{
+  return new Timer_impl(std::move(func), intervalMs);
+}
+
+Timer_impl::Timer_impl(ITimerFunction func, uint32_t intervalMs)
+: mTimerFunc(std::move(func))
+, mWorker(std::make_unique<LinuxTimerWorker>(
+    [this] { mTimerFunc(*this); }, std::chrono::milliseconds(intervalMs)))
+{
+}
+
+Timer_impl::~Timer_impl()
+{
+  Stop();
+}
+
+void Timer_impl::Stop()
+{
+  if (mWorker)
+    mWorker->Stop();
+}
 #endif

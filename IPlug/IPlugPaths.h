@@ -33,14 +33,17 @@ extern void HostPath(WDL_String& path, const char* bundleID = 0);
 
 /** Get the path to the plug-in binary 
  * @param path WDL_String reference where the path will be put on success or empty string on failure
- * @param pExtra This should either be a const char* to bundleID (macOS) or an HMODULE handle (windows) */
+ * @param pExtra This should be a const char* bundle ID (macOS), an HMODULE
+ * handle (Windows), or an address inside the plug-in module (Linux). */
 extern void PluginPath(WDL_String& path, PluginIDType pExtra);
 
 /** Get the path to the plug-in bundle resource path. On macOS and iOS if this is called in an AUv3 app extension it will return the bundle of the parent app
  * iOS bundles are flat, so the path is just to the .app where as macOS bundles contain a resources subfolder
- * On Windows this is only useful for VST3 plug-ins which have a "bundle" with a resource path since v3.6
+ * On Windows and Linux this is useful for VST3 plug-ins whose bundle contains
+ * a Contents/Resources directory.
  * @param path WDL_String reference where the path will be put on success or empty string on failure
- * @param pExtra This should either be a const char* to bundleID (macOS/iOS) or an HMODULE handle (windows) */
+ * @param pExtra This should be a const char* bundle ID (macOS/iOS), an HMODULE
+ * handle (Windows), or an address inside the plug-in module (Linux). */
 extern void BundleResourcePath(WDL_String& path, PluginIDType pExtra = 0);
 
 /** @param path WDL_String reference where the path will be put on success or empty string on failure */
@@ -107,4 +110,3 @@ extern bool IsOOPAuv3AppExtension();
 #endif
 
 END_IPLUG_NAMESPACE
-

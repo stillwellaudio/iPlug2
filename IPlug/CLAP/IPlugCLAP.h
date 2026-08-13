@@ -85,6 +85,11 @@ class IPlugCLAP : public IPlugAPIBase
 public:
   IPlugCLAP(const InstanceInfo& info, const Config& config);
 
+  // clap-helpers exposes log(severity, message) as a public base member. Keep
+  // that helper from hiding the standard math overload in plug-in methods.
+  template <typename T>
+  static auto log(T value) -> decltype(std::log(value)) { return std::log(value); }
+
   // IPlugAPIBase
   void BeginInformHostOfParamChange(int idx) override;
   void InformHostOfParamChange(int idx, double normalizedValue) override;
@@ -168,12 +173,12 @@ private:
   bool guiAdjustSize(uint32_t* pWidth, uint32_t* pHeight) noexcept override;
   bool guiSetSize(uint32_t width, uint32_t height) noexcept override;
 
-  // clap_plugin_gui_cocoa/win32
+  // clap_plugin_gui platform window support
   bool guiIsApiSupported(const char* api, bool isFloating) noexcept override;
   bool guiSetParent(const clap_window* pWindow) noexcept override;
   
   // Helper to attach GUI Windows
-  bool GUIWindowAttach(void* parent) noexcept;
+  virtual bool GUIWindowAttach(void* parent) noexcept;
 
   // Parameter flushing from GUI
   void FlushParamsIfNeeded();
@@ -204,12 +209,15 @@ private:
   bool mHostHasTail = false;
   bool mTailUpdate = false;
   bool mLatencyUpdate = false;
+  bool mLatencyRestartRequested = false;
+  int mPendingLatency = 0;
   
   void* mWindow = nullptr;
   bool mGUIOpen = false;
 };
 
-IPlugCLAP* MakePlug(const InstanceInfo& info);
+class Plugin;
+Plugin* MakePlug(const InstanceInfo& info);
 
 END_IPLUG_NAMESPACE
 

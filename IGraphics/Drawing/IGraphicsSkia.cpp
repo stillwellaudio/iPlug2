@@ -1,5 +1,6 @@
 #include <cmath>
 #include <map>
+#include <mutex>
 
 #include "IGraphicsSkia.h"
 
@@ -27,6 +28,10 @@
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skshaper/include/SkShaper.h"
 #include "modules/skunicode/include/SkUnicode_icu.h"
+#endif
+
+#if defined OS_LINUX
+#include "include/ports/SkFontMgr_fontconfig.h"
 #endif
 #pragma warning( pop )
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
@@ -76,6 +81,9 @@
   #elif defined OS_WIN
     #include "include/gpu/ganesh/gl/win/GrGLMakeWinInterface.h"
     #pragma comment(lib, "opengl32.lib")
+  #elif defined OS_LINUX
+    #include <glad/glad.h>
+    #include "include/gpu/ganesh/gl/glx/GrGLMakeGLXInterface.h"
   #endif
 
 #endif
@@ -306,6 +314,8 @@ static sk_sp<SkFontMgr> SFontMgrFactory()
   return SkFontMgr_New_CoreText(nullptr);
 #elif defined OS_WIN
   return SkFontMgr_New_DirectWrite();
+#elif defined OS_LINUX
+  return SkFontMgr_New_FontConfig(nullptr);
 #else
   #error "Not supported"
 #endif
@@ -425,6 +435,8 @@ void IGraphicsSkia::OnViewInitialized(void* pContext)
   auto glInterface = GrGLInterfaces::MakeMac();
 #elif defined OS_WIN
   auto glInterface = GrGLInterfaces::MakeWin();
+#elif defined OS_LINUX
+  auto glInterface = GrGLInterfaces::MakeGLX();
 #endif
   mGrContext = GrDirectContexts::MakeGL(glInterface);
 #elif defined IGRAPHICS_METAL
@@ -594,6 +606,9 @@ void IGraphicsSkia::EndFrame()
 
 void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int srcX, int srcY, const IBlend* pBlend)
 {
+  if (!bitmap.IsValid())
+    return;
+
   SkPaint p;
   
   p.setAntiAlias(true);
@@ -689,7 +704,7 @@ bool IGraphicsSkia::LoadAPIFont(const char* fontID, const PlatformFontPtr& font)
   return false;
 }
 
-void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IRECT& r, double& x, double & y, SkFont& font) const
+bool IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IRECT& r, double& x, double & y, SkFont& font) const
 {
   SkFontMetrics metrics;
   SkPaint paint;
@@ -697,8 +712,9 @@ void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IR
   
   StaticStorage<Font>::Accessor storage(sFontCache);
   Font* pFont = storage.Find(text.mFont);
-  
-  assert(pFont && "No font found - did you forget to load it?");
+
+  if (!pFont || !pFont->mData || !pFont->mData->IsValid() || !pFont->mTypeface)
+    return false;
 
   font.setTypeface(pFont->mTypeface);
   font.setHinting(SkFontHinting::kSlight);
@@ -729,6 +745,7 @@ void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IR
   }
   
   r = IRECT((float) x, (float) y + ascender, (float) (x + textWidth), (float) (y + ascender + textHeight));
+  return true;
 }
 
 float IGraphicsSkia::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
@@ -738,7 +755,11 @@ float IGraphicsSkia::DoMeasureText(const IText& text, const char* str, IRECT& bo
 
   IRECT r = bounds;
   double x, y;
-  PrepareAndMeasureText(text, str, bounds, x, y, font);
+  if (!PrepareAndMeasureText(text, str, bounds, x, y, font))
+  {
+    bounds = IRECT();
+    return 0.f;
+  }
   DoMeasureTextRotation(text, r, bounds);
   return bounds.W();
 }
@@ -752,7 +773,8 @@ void IGraphicsSkia::DoDrawText(const IText& text, const char* str, const IRECT& 
 
   double x, y;
 
-  PrepareAndMeasureText(text, str, measured, x, y, font);
+  if (!PrepareAndMeasureText(text, str, measured, x, y, font))
+    return;
   PathTransformSave();
   DoTextRotation(text, bounds, measured);
   SkPaint paint;

@@ -77,7 +77,15 @@
 #endif
 
 BEGIN_IPLUG_NAMESPACE
+#ifdef CLAP_API
+class Plugin : public PLUGIN_API_BASE
+{
+public:
+  using PLUGIN_API_BASE::PLUGIN_API_BASE;
+};
+#else
 using Plugin = PLUGIN_API_BASE;
+#endif
 END_IPLUG_NAMESPACE
 
 #ifdef OS_WIN
@@ -97,7 +105,9 @@ END_IPLUG_NAMESPACE
   #endif
   #define EXPORT __attribute__ ((visibility("default")))
 #elif defined OS_LINUX
-  //TODO:
+  #define EXPORT __attribute__ ((visibility("default")))
+  #define BUNDLE_ID ""
+  #define APP_GROUP_ID ""
 #elif defined OS_WEB
   #define BUNDLE_ID ""
   #define APP_GROUP_ID ""
