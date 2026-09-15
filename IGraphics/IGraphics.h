@@ -1614,8 +1614,8 @@ public:
   /** @param enable Set \c true if you want to handle mouse over messages. Note: this may increase the amount CPU usage if you redraw on mouse overs etc */
   void EnableMouseOver(bool enable) { mEnableMouseOver = enable; }
 
-  /** Used to tell the graphics context to stop tracking mouse interaction with a control */
-  void ReleaseMouseCapture();
+  /** Stop tracking mouse interaction with a control and release platform capture before a popup. */
+  virtual void ReleaseMouseCapture();
 
   /** @return \c true if the context has mouse overs enabled */
   bool MouseOverEnabled() const { return mEnableMouseOver; }

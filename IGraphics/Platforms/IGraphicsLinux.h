@@ -43,6 +43,7 @@ public:
 
   bool PlatformProcessEvents();
 
+  void ReleaseMouseCapture() override;
   void HideMouseCursor(bool hide, bool lock) override;
   void MoveMouseCursor(float x, float y) override;
   ECursor SetMouseCursor(ECursor cursorType) override;

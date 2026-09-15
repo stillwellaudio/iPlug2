@@ -1167,6 +1167,19 @@ void IGraphicsLinux::GetMouseLocation(float& x, float& y) const
   }
 }
 
+void IGraphicsLinux::ReleaseMouseCapture()
+{
+  std::lock_guard<std::recursive_mutex> lock(mImpl->mutex);
+  IGraphics::ReleaseMouseCapture();
+  if (!mImpl->display)
+    return;
+
+  // A host popup uses another X11 connection. Finish releasing both explicit
+  // and implicit button grabs before entering its synchronous menu loop.
+  XUngrabPointer(mImpl->display, kX11CurrentTime);
+  XSync(mImpl->display, False);
+}
+
 void IGraphicsLinux::HideMouseCursor(bool hide, bool lockCursor)
 {
   (void) lockCursor;
