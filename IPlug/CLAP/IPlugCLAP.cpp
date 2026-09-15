@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <climits>
+#include <clap/factory/preset-discovery.h>
 
 #include "IPlugCLAP.h"
 #include "IPlugPluginBase.h"
@@ -50,7 +52,8 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   mAudioIO64.Resize(nChans);
   
   SetHost(info.mHost->name, version);
-  CreateTimer();
+  if (!info.mIsPresetDiscovery)
+    CreateTimer();
 }
 
 uint32_t IPlugCLAP::tailGet() const noexcept
@@ -471,6 +474,38 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
   }
   
   return restoredOK;
+}
+
+bool IPlugCLAP::presetLoadFromLocation(uint32_t locationKind, const char* location, const char* loadKey) noexcept
+{
+  auto fail = [&]() {
+    if (GetClapHost().canUsePresetLoad())
+      GetClapHost().presetLoadOnError(locationKind, location, loadKey, 0, "Unknown factory preset");
+    return false;
+  };
+
+  if (locationKind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || location || !loadKey || !loadKey[0])
+    return fail();
+
+  // Keys are canonical zero-based program indices; reject overflow and partial parses.
+  if (loadKey[0] == '0' && loadKey[1])
+    return fail();
+  int index = 0;
+  for (const char* p = loadKey; *p; ++p)
+  {
+    if (*p < '0' || *p > '9' || index > (INT_MAX - (*p - '0')) / 10)
+      return fail();
+    index = index * 10 + (*p - '0');
+  }
+
+  if (index >= NPresets() || !GetPreset(index)->mInitialized || !RestorePreset(index))
+    return fail();
+
+  if (GetClapHost().canUseParams())
+    GetClapHost().paramsRescan(CLAP_PARAM_RESCAN_VALUES);
+  if (GetClapHost().canUsePresetLoad())
+    GetClapHost().presetLoadLoaded(locationKind, location, loadKey);
+  return true;
 }
 
 // clap_plugin_params

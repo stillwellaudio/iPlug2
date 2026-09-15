@@ -59,3 +59,9 @@ endif()
 
 enable_testing()
 add_test(NAME iplug_clap_adapter_tests COMMAND iplug_clap_adapter_tests)
+
+# Optional integration probe: pass a built CLAP binary and its factory preset count.
+add_executable(iplug_clap_factory_preset_probe FactoryPresetProbe.cpp)
+target_compile_features(iplug_clap_factory_preset_probe PRIVATE cxx_std_17)
+target_include_directories(iplug_clap_factory_preset_probe PRIVATE ${CLAP_SDK_ROOT}/include)
+target_link_libraries(iplug_clap_factory_preset_probe PRIVATE ${CMAKE_DL_LIBS})
