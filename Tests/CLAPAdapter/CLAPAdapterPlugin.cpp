@@ -14,11 +14,13 @@ bool gOpenWindowSucceeds = true;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
-  : Plugin(info, MakeConfig(2, 1))
+  : Plugin(info, MakeConfig(2, 3))
 {
   gLastPlugin = this;
   GetParam(0)->InitDouble("Gain", 1.0, 0.0, 1.0, 0.01);
   GetParam(1)->InitEnum("Mode", 0, {"Clip", "Limit"});
+  MakePreset("Quiet", 0.25, 0);
+  MakePreset("Loud", 0.75, 1);
 }
 
 extern "C" void TriggerCLAPAdapterParamChange()

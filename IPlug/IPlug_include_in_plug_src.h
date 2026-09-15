@@ -298,6 +298,8 @@
   #endif
 #endif
 
+#include "CLAP/IPlugCLAPPresetDiscovery.h"
+
 std::string gPluginPath;
 std::unique_ptr<clap_plugin_descriptor> gPluginDesc;
 std::mutex gClapEntryMutex;
@@ -413,12 +415,54 @@ CLAP_EXPORT const clap_plugin_factory_t clap_factory = {
   clap_create_plugin,
 };
 
+// REAPER selects the provider whose ID matches the plug-in ID.
+static const clap_preset_discovery_provider_descriptor_t gPresetProviderDesc {
+  CLAP_VERSION, CLAP_ID_STR, PLUG_NAME " Factory Presets", PLUG_MFR
+};
+
+static uint32_t CLAP_ABI clap_preset_provider_count(const clap_preset_discovery_factory_t*)
+{
+  return 1;
+}
+
+static const clap_preset_discovery_provider_descriptor_t* CLAP_ABI clap_preset_provider_descriptor(
+  const clap_preset_discovery_factory_t*, uint32_t index)
+{
+  return index == 0 ? &gPresetProviderDesc : nullptr;
+}
+
+static const clap_preset_discovery_provider_t* CLAP_ABI clap_create_preset_provider(
+  const clap_preset_discovery_factory_t*, const clap_preset_discovery_indexer_t* indexer, const char* id)
+{
+  std::lock_guard<std::mutex> lock(gClapEntryMutex);
+  if (!gClapEntryInitCount || !indexer || !indexer->declare_location ||
+      !clap_version_is_compatible(indexer->clap_version) || !id || strcmp(id, gPresetProviderDesc.id))
+    return nullptr;
+  try
+  {
+    return (new IPlugCLAPPresetProvider(&gPresetProviderDesc, indexer, gPluginDesc.get(),
+      [](const InstanceInfo& info) -> IPlugCLAP* { return MakePlug(info); }))->Get();
+  }
+  catch (...)
+  {
+    return nullptr;
+  }
+}
+
+static const clap_preset_discovery_factory_t clap_preset_factory {
+  clap_preset_provider_count, clap_preset_provider_descriptor, clap_create_preset_provider
+};
+
 const void *clap_get_factory(const char *factory_id)
 {
    std::lock_guard<std::mutex> lock(gClapEntryMutex);
 
    if (gClapEntryInitCount > 0 && factory_id && !::strcmp(factory_id, CLAP_PLUGIN_FACTORY_ID))
       return &clap_factory;
+   if (gClapEntryInitCount > 0 && factory_id &&
+       (!::strcmp(factory_id, CLAP_PRESET_DISCOVERY_FACTORY_ID) ||
+        !::strcmp(factory_id, CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT)))
+      return &clap_preset_factory;
     
    return nullptr;
 }
