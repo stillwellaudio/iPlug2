@@ -1465,6 +1465,14 @@ void IGraphics::SetPTParameterHighlight(int paramIdx, bool isHighlighted, int co
 
 void IGraphics::PopupHostContextMenuForParam(IControl* pControl, int paramIdx, float x, float y)
 {
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  // Temporary Linux limitation: input currently arrives on LinuxTimerWorker,
+  // not the host UI thread. Do not enter the host's synchronous context menu
+  // until IRunLoop integration is qualified. Release capture for direct callers
+  // too; ordinary right-click dispatch already releases it before this call.
+  ReleaseMouseCapture();
+  return;
+#else
   IPopupMenu& contextMenu = mPromptPopupMenu;
   contextMenu.Clear();
 
@@ -1548,6 +1556,7 @@ void IGraphics::PopupHostContextMenuForParam(IControl* pControl, int paramIdx, f
     DoCreatePopupMenu(*pControl, contextMenu, IRECT(x, y, x, y), kNoValIdx, true);
 #endif
   }
+#endif
 }
 
 void IGraphics::PopupHostContextMenuForParam(int controlIdx, int paramIdx, float x, float y)
