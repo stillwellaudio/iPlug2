@@ -139,7 +139,19 @@ void IPlugAPIBase::SendParameterValueFromAPI(int paramIdx, double value, bool no
   mParamChangeFromProcessor.PushFromArgs(paramIdx, value);
 }
 
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+void IPlugAPIBase::SuspendBackgroundTimer()
+{
+  if (mTimer) mTimer->Stop();
+  mTimer.reset();
+}
+
+void IPlugAPIBase::OnTimer(Timer& t) { OnHostIdle(); }
+
+void IPlugAPIBase::OnHostIdle()
+#else
 void IPlugAPIBase::OnTimer(Timer& t)
+#endif
 {
   if(HasUI())
   {

@@ -14,6 +14,9 @@
 #include "pluginterfaces/base/keycodes.h"
 
 #include "IPlugStructs.h"
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+#include "IPlugVST3_RunLoop.h"
+#endif
 
 /** IPlug VST3 View  */
 template <class T>
@@ -29,12 +32,37 @@ public:
   
   ~IPlugVST3View()
   {
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+    if (mAttached) removed();
+    mHostTimer.Stop();
+    mIdleTimer.Stop();
+#endif
     mOwner.release();
   }
   
   IPlugVST3View(const IPlugVST3View&) = delete;
   IPlugVST3View& operator=(const IPlugVST3View&) = delete;
   
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+  Steinberg::tresult PLUGIN_API setFrame(Steinberg::IPlugFrame* frame) override
+  {
+    const auto result = CPluginView::setFrame(frame);
+    mRunLoop = Steinberg::FUnknownPtr<Steinberg::Linux::IRunLoop>(frame);
+    iplug::TraceVST3RunLoop(mRunLoop ? "frame-runloop" : "frame-no-runloop", this);
+    if (mAttached)
+    {
+      mReconfigure = true;
+      if (!mInHostCallback) ConfigureHostTimer();
+    }
+    return result;
+  }
+
+  bool CanShowHostContextMenu() const
+  {
+    return mAttached && mHostDriven && std::this_thread::get_id() == mUIThread;
+  }
+#endif
+
   Steinberg::tresult PLUGIN_API isPlatformTypeSupported(Steinberg::FIDString type) override
   {
     if (mOwner.HasUI()) // for no editor plugins
@@ -125,7 +153,27 @@ public:
 #elif defined OS_LINUX
       if (strcmp(type, Steinberg::kPlatformTypeX11EmbedWindowID) != 0)
         return Steinberg::kResultFalse;
+#ifndef NO_IGRAPHICS
+      if (mAttached) return Steinberg::kResultFalse;
+      mUIThread = std::this_thread::get_id();
+      mOwner.SuspendBackgroundTimer();
+      mOwner.SetEditorHostDriven(true);
+#endif
       pView = mOwner.OpenWindow(pParent);
+#ifndef NO_IGRAPHICS
+      mAttached = pView != nullptr;
+      if (mAttached)
+      {
+        mReconfigure = true;
+        if (!mInHostCallback) ConfigureHostTimer();
+      }
+      else
+      {
+        mOwner.CloseWindow();
+        mOwner.SetEditorHostDriven(false);
+        mOwner.CreateTimer();
+      }
+#endif
 #else
       return Steinberg::kResultFalse;
 #endif
@@ -137,9 +185,22 @@ public:
     
   Steinberg::tresult PLUGIN_API removed() override
   {
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+    const bool wasAttached = mAttached;
+    mAttached = false;
+    mHostDriven = false;
+    mHostTimer.Stop();
+    mIdleTimer.Stop();
+#endif
     if (mOwner.HasUI())
       mOwner.CloseWindow();
-    
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+    if (wasAttached)
+    {
+      mReconfigure = true;
+      if (!mInHostCallback) ConfigureHostTimer();
+    }
+#endif
     return CPluginView::removed();
   }
 
@@ -349,5 +410,53 @@ public:
     plugFrame->resizeView(this, &newSize);
   }
 
+#if defined OS_LINUX && !defined NO_IGRAPHICS
+private:
+  void ConfigureHostTimer()
+  {
+    mReconfigure = false;
+    mHostTimer.Stop();
+    mIdleTimer.Stop();
+    mHostDriven = false;
+    mOwner.SuspendBackgroundTimer();
+    mOwner.SetEditorHostDriven(true);
+    if (mAttached && mRunLoop)
+    {
+      mHostDriven = mHostTimer.Start(mRunLoop, mOwner.GetEditorFrameInterval(), [this] { OnHostCallback(true); })
+                 && mIdleTimer.Start(mRunLoop, IDLE_TIMER_RATE, [this] { OnHostCallback(false); });
+    }
+    if (!mHostDriven)
+    {
+      mHostTimer.Stop();
+      mIdleTimer.Stop();
+      // Preserve existing editor operation for hosts without a usable loop;
+      // the host context-menu path remains disabled in that fallback.
+      mOwner.SetEditorHostDriven(false);
+      mOwner.CreateTimer();
+      iplug::TraceVST3RunLoop("worker-fallback", this);
+    }
+  }
+  void OnHostCallback(bool draw)
+  {
+    Steinberg::IPtr<IPlugVST3View> keepAlive(this);
+    if (!mAttached || mInHostCallback) return;
+    mInHostCallback = true;
+    mOwner.OnEditorHostFrame([this, draw] {
+      if (!draw) mOwner.OnHostIdle();
+    }, draw);
+    mInHostCallback = false;
+    if (mReconfigure) ConfigureHostTimer();
+  }
+
+  Steinberg::FUnknownPtr<Steinberg::Linux::IRunLoop> mRunLoop;
+  iplug::VST3RunLoopTimer mHostTimer;
+  iplug::VST3RunLoopTimer mIdleTimer;
+  std::thread::id mUIThread;
+  bool mAttached = false;
+  bool mHostDriven = false;
+  bool mInHostCallback = false;
+  bool mReconfigure = false;
+public:
+#endif
   T& mOwner;
 };
