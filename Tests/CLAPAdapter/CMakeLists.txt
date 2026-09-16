@@ -65,3 +65,8 @@ add_executable(iplug_clap_factory_preset_probe FactoryPresetProbe.cpp)
 target_compile_features(iplug_clap_factory_preset_probe PRIVATE cxx_std_17)
 target_include_directories(iplug_clap_factory_preset_probe PRIVATE ${CLAP_SDK_ROOT}/include)
 target_link_libraries(iplug_clap_factory_preset_probe PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+  # On glibc before 2.34 the probe must load pthread before dlopen(RTLD_LOCAL).
+  # Otherwise libstdc++ can retain unresolved weak pthread hooks at startup.
+  target_link_libraries(iplug_clap_factory_preset_probe PRIVATE Threads::Threads)
+endif()

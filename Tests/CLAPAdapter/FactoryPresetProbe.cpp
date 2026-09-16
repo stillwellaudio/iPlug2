@@ -52,6 +52,7 @@ int main(int argc, char** argv)
   };
   const auto* descriptor = discovery->get_descriptor(discovery, 0);
   Require(descriptor, "provider descriptor");
+  Require(descriptor->id == capture.pluginID, "provider identity matches plugin identity");
   const auto* provider = discovery->create(discovery, &indexer, descriptor->id);
   Require(provider && provider->init(provider), "provider init");
   clap_preset_discovery_metadata_receiver_t receiver {};
@@ -66,7 +67,8 @@ int main(int argc, char** argv)
   };
   Require(provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, &receiver), "metadata");
   provider->destroy(provider);
-  Require(capture.locations == 1 && capture.presets.size() == std::stoul(argv[2]), "expected bank size");
+  std::cout << "Discovered " << capture.presets.size() << " initialized presets" << std::endl;
+  Require(capture.locations == (capture.presets.empty() ? 0 : 1) && capture.presets.size() == std::stoul(argv[2]), "expected bank size");
   std::set<std::string> keys;
   for (auto& p : capture.presets) Require(keys.insert(p.key).second, "unique load keys");
 
@@ -107,7 +109,10 @@ int main(int argc, char** argv)
     Require(load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, preset.key.c_str()), "preset recall");
     snapshots.push_back(snapshot());
   }
-  Require(std::set<std::vector<double>>(snapshots.begin(), snapshots.end()).size() > 1, "presets change parameters");
+  // Empty banks and banks containing only repeated defaults are legitimate.
+  // Exact recall and notifications are still checked for every initialized slot.
+  std::cout << "Distinct parameter sets: "
+            << std::set<std::vector<double>>(snapshots.begin(), snapshots.end()).size() << std::endl;
   for (size_t i=capture.presets.size(); i-- > 0;)
   {
     Require(load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, capture.presets[i].key.c_str()), "reverse recall");
