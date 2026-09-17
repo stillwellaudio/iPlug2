@@ -1,4 +1,5 @@
 #include <clap/clap.h>
+#include <clap/factory/preset-discovery.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -9,6 +10,8 @@
 
 extern const clap_plugin_entry_t clap_entry;
 extern "C" void TriggerCLAPAdapterParamChange();
+extern "C" void CLAPAdapterSetZeroParameters(bool enabled);
+extern "C" int CLAPAdapterCurrentPreset();
 extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
@@ -23,6 +26,8 @@ int gCallbackRequests = 0;
 int gRescanRequests = 0;
 int gRestartRequests = 0;
 int gLatencyChanges = 0;
+int gPresetsLoaded = 0;
+int gPresetErrors = 0;
 
 #define CHECK(condition) \
   do \
@@ -58,10 +63,17 @@ const clap_host_latency_t kHostLatency {
   HostLatencyChanged,
 };
 
+const clap_host_preset_load_t kHostPresets {
+  [](const clap_host_t*, uint32_t, const char*, const char*, int32_t, const char*) { ++gPresetErrors; },
+  [](const clap_host_t*, uint32_t, const char*, const char*) { ++gPresetsLoaded; },
+};
+
 const void* HostGetExtension(const clap_host_t*, const char* extensionId)
 {
   if (!extensionId)
     return nullptr;
+  if (std::strcmp(extensionId, CLAP_EXT_PRESET_LOAD) == 0)
+    return &kHostPresets;
   if (std::strcmp(extensionId, CLAP_EXT_PARAMS) == 0)
     return &kHostParams;
   if (std::strcmp(extensionId, CLAP_EXT_LATENCY) == 0)
@@ -169,6 +181,118 @@ struct OutputEvents
     : output {this, Push}
   {}
 };
+
+
+struct PresetIndex
+{
+  int locations = 0;
+  int loaded = 0;
+  std::vector<std::string> names, keys;
+  bool accept = true;
+  static bool Location(const clap_preset_discovery_indexer_t* indexer, const clap_preset_discovery_location_t* loc)
+  {
+    auto& self = *static_cast<PresetIndex*>(indexer->indexer_data);
+    ++self.locations;
+    CHECK(loc->kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN);
+    CHECK(loc->location == nullptr);
+    CHECK(loc->flags & CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
+    return self.accept;
+  }
+  static bool Begin(const clap_preset_discovery_metadata_receiver_t* receiver, const char* name, const char* key)
+  {
+    auto& self = *static_cast<PresetIndex*>(receiver->receiver_data);
+    self.names.emplace_back(name);
+    self.keys.emplace_back(key);
+    return self.accept;
+  }
+  static void PluginID(const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t* id)
+  {
+    CHECK(std::strcmp(id->abi, "clap") == 0);
+    CHECK(std::strcmp(id->id, "com.stillwellaudio.clapadaptertest") == 0);
+  }
+};
+
+void TestFactoryPresets(bool zeroParameters = false)
+{
+  CLAPAdapterSetZeroParameters(zeroParameters);
+  const int errorsBefore = gPresetErrors;
+  CHECK(clap_entry.init("/tmp/clapadaptertest.clap"));
+  const auto* discovery = static_cast<const clap_preset_discovery_factory_t*>(clap_entry.get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID));
+  CHECK(discovery);
+  if (!discovery) { clap_entry.deinit(); return; }
+  CHECK(clap_entry.get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT) == discovery);
+  CHECK(discovery->count(discovery) == 1);
+  CHECK(!discovery->get_descriptor(discovery, 1));
+  const auto* desc = discovery->get_descriptor(discovery, 0);
+  CHECK(desc);
+  CHECK(std::strcmp(desc->id, "com.stillwellaudio.clapadaptertest") == 0);
+  PresetIndex capture;
+  clap_preset_discovery_indexer_t indexer {};
+  indexer.clap_version = CLAP_VERSION;
+  indexer.indexer_data = &capture;
+  indexer.declare_location = PresetIndex::Location;
+  CHECK(!discovery->create(discovery, nullptr, desc->id));
+  CHECK(!discovery->create(discovery, &indexer, "unknown"));
+  const auto* provider = discovery->create(discovery, &indexer, desc->id);
+  CHECK(provider);
+  CHECK(capture.locations == 0); // No callbacks until init.
+  CHECK(provider->init(provider));
+  CHECK(provider->init(provider));
+  CHECK(capture.locations == 1);
+  clap_preset_discovery_metadata_receiver_t receiver {};
+  receiver.receiver_data = &capture;
+  receiver.begin_preset = PresetIndex::Begin;
+  receiver.add_plugin_id = PresetIndex::PluginID;
+  CHECK(!provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_FILE, "/tmp/foo", &receiver));
+  CHECK(!provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, "", &receiver));
+  CHECK(provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, &receiver));
+  CHECK(capture.names == std::vector<std::string>({"Quiet", "Loud"})); // Vacant slot is not factory content.
+  CHECK(capture.keys == std::vector<std::string>({"0", "1"}));
+  capture.names.clear(); capture.keys.clear(); capture.accept = false;
+  provider->get_metadata(provider, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, &receiver);
+  CHECK(capture.names.size() == 1); // Receiver cancellation stops enumeration.
+  provider->destroy(provider);
+
+  auto host = MakeHost();
+  const auto* factory = static_cast<const clap_plugin_factory_t*>(clap_entry.get_factory(CLAP_PLUGIN_FACTORY_ID));
+  const auto* plugin = factory->create_plugin(factory, &host, factory->get_plugin_descriptor(factory, 0)->id);
+  CHECK(plugin && plugin->init(plugin));
+  const auto* load = static_cast<const clap_plugin_preset_load_t*>(plugin->get_extension(plugin, CLAP_EXT_PRESET_LOAD));
+  const auto* params = static_cast<const clap_plugin_params_t*>(plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+  CHECK(load);
+  if (load)
+  {
+    for (int i = 0; i < 2; ++i)
+    {
+      const int rescans = gRescanRequests;
+      const int loaded = gPresetsLoaded;
+      CHECK(load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, i ? "1" : "0"));
+      double value = 0;
+      CHECK(CLAPAdapterCurrentPreset() == i);
+      if (!zeroParameters)
+      {
+        CHECK(params->get_value(plugin, 0, &value) && value == (i ? 0.75 : 0.25));
+        CHECK(params->get_value(plugin, 1, &value) && value == i);
+      }
+      else
+        CHECK(params->count(plugin) == 0);
+      CHECK(gRescanRequests == rescans + 1);
+      CHECK(gPresetsLoaded == loaded + 1);
+    }
+    for (const char* key : {"", "-1", "+1", "01", "1x", "2", "999999999999999999999999"})
+      CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key));
+    CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, nullptr));
+    CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_FILE, "/tmp/foo", "0"));
+    CHECK(gPresetErrors == errorsBefore + 9);
+    double value = 0;
+    CHECK(CLAPAdapterCurrentPreset() == 1);
+    if (!zeroParameters)
+      CHECK(params->get_value(plugin, 0, &value) && value == 0.75);
+  }
+  plugin->destroy(plugin);
+  clap_entry.deinit();
+  CLAPAdapterSetZeroParameters(false);
+}
 
 void TestEntryAndFactoryLifetime()
 {
@@ -359,8 +483,12 @@ void TestAudioPortsStateAndFactoryValidation()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+  TestFactoryPresets();
+  TestFactoryPresets(true);
+  if (argc == 2 && std::strcmp(argv[1], "--presets-only") == 0)
+    return gFailures == 0 ? 0 : 1;
   TestEntryAndFactoryLifetime();
   TestAudioPortsStateAndFactoryValidation();
   return gFailures == 0 ? 0 : 1;

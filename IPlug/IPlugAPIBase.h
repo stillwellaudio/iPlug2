@@ -191,6 +191,10 @@ public:
 
   /** Called by the API class to create the timer that pumps the parameter/message queues */
   void CreateTimer();
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  void SuspendBackgroundTimer();
+  void OnHostIdle();
+#endif
   
 private:
   /** Implementations call into the APIs resize hooks

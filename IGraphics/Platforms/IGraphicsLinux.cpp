@@ -343,6 +343,9 @@ public:
   float lastClickX = 0.f;
   float lastClickY = 0.f;
   unsigned int lastClickButton = 0;
+  bool hostRightButtonDown = false;
+  float hostRightButtonX = 0.f;
+  float hostRightButtonY = 0.f;
   float previousMouseX = 0.f;
   float previousMouseY = 0.f;
 };
@@ -541,13 +544,46 @@ void* IGraphicsLinux::OpenWindow(void* parent)
   XFlush(mImpl->display);
   DeactivateGLContext();
 
-  const auto intervalMs = static_cast<uint32_t>(std::max(1, 1000 / std::max(1, FPS())));
-  mTimer.reset(Timer::Create([this](Timer&) { OnDisplayTimer(); }, intervalMs));
+  if (!mHostDriven) StartDisplayTimer();
   return reinterpret_cast<void*>(mImpl->window);
 }
 
+void IGraphicsLinux::StartDisplayTimer()
+{
+  const auto intervalMs = static_cast<uint32_t>(std::max(1, 1000 / std::max(1, FPS())));
+  mTimer.reset(Timer::Create([this](Timer&) { OnDisplayTimer(); }, intervalMs));
+}
+
+#if defined VST3_API || defined VST3C_API
+void IGraphicsLinux::SetHostDriven(bool enabled)
+{
+  if (mHostDriven == enabled) return;
+  if (mTimer) { mTimer->Stop(); mTimer.reset(); }
+  mHostDriven = enabled;
+  if (!enabled && WindowIsOpen()) StartDisplayTimer();
+}
+
+void IGraphicsLinux::OnHostFrame(const std::function<void()>& idle, bool draw)
+{
+  if (!mHostDriven || mInDisplayCallback) return;
+  mInDisplayCallback = true;
+  idle();
+  if (draw && !mClosePending) OnDisplayTimer();
+  mInDisplayCallback = false;
+  if (mClosePending) CloseWindow();
+}
+#endif
+
 void IGraphicsLinux::CloseWindow()
 {
+  // Keep the controls (including menu targets) and GL resources alive until
+  // a synchronous host popup returns. The delegate retains this object too.
+  if (mHostDriven && mInDisplayCallback)
+  {
+    mClosePending = true;
+    return;
+  }
+  mClosePending = false;
   if (mTimer)
   {
     mTimer->Stop();
@@ -630,11 +666,12 @@ void IGraphicsLinux::DeactivateGLContext()
 
 bool IGraphicsLinux::PlatformProcessEvents()
 {
-  std::lock_guard<std::recursive_mutex> lock(mImpl->mutex);
+  std::unique_lock<std::recursive_mutex> lock(mImpl->mutex, std::defer_lock);
+  if (!mHostDriven) lock.lock();
   if (!mImpl->display || !mImpl->window)
     return false;
 
-  while (XPending(mImpl->display) > 0)
+  while (!mClosePending && mImpl->display && XPending(mImpl->display) > 0)
   {
     XEvent event {};
     XNextEvent(mImpl->display, &event);
@@ -697,6 +734,17 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         kX11None,
         event.xbutton.time);
 
+      // SWELL/GTK host menus consume button release as menu dismissal. Open
+      // the VST3 host menu after releasing the initiating button, on the same
+      // host UI thread. Retain the press position for the parameter hit test.
+      if (mHostDriven && event.xbutton.button == Button3)
+      {
+        mImpl->hostRightButtonDown = true;
+        mImpl->hostRightButtonX = x;
+        mImpl->hostRightButtonY = y;
+        break;
+      }
+
       const Time clickTime = event.xbutton.time;
       const bool isDoubleClick = event.xbutton.button == mImpl->lastClickButton
                               && clickTime - mImpl->lastClickTime < 250
@@ -736,6 +784,15 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
       info.x = linux_input::DeviceToLogical(event.xbutton.x, scale);
       info.y = linux_input::DeviceToLogical(event.xbutton.y, scale);
       info.ms = MouseModifiers(event.xbutton.state, event.xbutton.button);
+      if (mHostDriven && event.xbutton.button == Button3 && mImpl->hostRightButtonDown)
+      {
+        mImpl->hostRightButtonDown = false;
+        info.x = mImpl->hostRightButtonX;
+        info.y = mImpl->hostRightButtonY;
+        ReleaseMouseCapture();
+        OnMouseDown({info});
+        if (mClosePending) break;
+      }
       OnMouseUp({info});
       XUngrabPointer(mImpl->display, event.xbutton.time);
       break;
@@ -1167,6 +1224,19 @@ void IGraphicsLinux::GetMouseLocation(float& x, float& y) const
   }
 }
 
+void IGraphicsLinux::ReleaseMouseCapture()
+{
+  std::lock_guard<std::recursive_mutex> lock(mImpl->mutex);
+  IGraphics::ReleaseMouseCapture();
+  if (!mImpl->display)
+    return;
+
+  // A host popup uses another X11 connection. Finish releasing both explicit
+  // and implicit button grabs before entering its synchronous menu loop.
+  XUngrabPointer(mImpl->display, kX11CurrentTime);
+  XSync(mImpl->display, False);
+}
+
 void IGraphicsLinux::HideMouseCursor(bool hide, bool lockCursor)
 {
   (void) lockCursor;
@@ -1323,8 +1393,11 @@ bool IGraphicsLinux::GetTextFromClipboard(WDL_String& str)
 
 void IGraphicsLinux::OnDisplayTimer()
 {
-  std::lock_guard<std::recursive_mutex> lock(mImpl->mutex);
-  if (!PlatformProcessEvents() || !mImpl->display || !mImpl->window)
+  // Host-driven input may enter a synchronous host menu. Do not carry the
+  // editor lock into that nested event loop.
+  std::unique_lock<std::recursive_mutex> lock(mImpl->mutex, std::defer_lock);
+  if (!mHostDriven) lock.lock();
+  if (!PlatformProcessEvents() || mClosePending || !mImpl->display || !mImpl->window)
     return;
 
   IRECTList dirtyRectangles;

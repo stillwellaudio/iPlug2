@@ -30,6 +30,7 @@ struct InstanceInfo
 {
   const clap_plugin_descriptor* mDesc;
   const clap_host* mHost;
+  bool mIsPresetDiscovery = false;
 };
 
 // Set the level of host checking based on if this is debug build
@@ -129,6 +130,10 @@ private:
   bool implementsState() const noexcept override { return true; }
   bool stateSave(const clap_ostream* pStream) noexcept override;
   bool stateLoad(const clap_istream* pStream) noexcept override;
+
+  // clap_plugin_preset_load
+  bool implementsPresetLoad() const noexcept override { return NPresets() > 0; }
+  bool presetLoadFromLocation(uint32_t locationKind, const char* location, const char* loadKey) noexcept override;
 
   // clap_plugin_audio_ports
   bool implementsAudioPorts() const noexcept override;
