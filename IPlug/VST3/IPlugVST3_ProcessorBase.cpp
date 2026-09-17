@@ -390,8 +390,14 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
         int32 offsetSamples;
         double value;
         
-        if (paramQueue->getPoint(numPoints - 1,  offsetSamples, value) == kResultTrue)
+        // Retain the complete automation/expression timeline. Instruments can
+        // queue these offsets alongside notes; dropping all but the final point
+        // loses bends and controller changes that precede a note-off in a block.
+        for (int32 point = 0; point < numPoints; ++point)
         {
+          if (paramQueue->getPoint(point, offsetSamples, value) != kResultTrue)
+            continue;
+
           int idx = paramQueue->getParameterId();
           
           switch (idx)

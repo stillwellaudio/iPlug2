@@ -42,7 +42,12 @@ public:
   float GetPlatformWindowScale() const override { return GetScreenScale(); }
 
   bool PlatformProcessEvents();
+#if defined VST3_API || defined VST3C_API
+  void SetHostDriven(bool enabled);
+  void OnHostFrame(const std::function<void()>& idle, bool draw);
+#endif
 
+  void ReleaseMouseCapture() override;
   void HideMouseCursor(bool hide, bool lock) override;
   void MoveMouseCursor(float x, float y) override;
   ECursor SetMouseCursor(ECursor cursorType) override;
@@ -103,6 +108,10 @@ private:
   std::unique_ptr<Impl> mImpl;
   std::unique_ptr<Timer> mTimer;
 
+  bool mHostDriven = false;
+  bool mInDisplayCallback = false;
+  bool mClosePending = false;
+  void StartDisplayTimer();
   void OnDisplayTimer();
   bool HandleXEvent(const XEvent& event);
   void HandleSelectionRequest(const XSelectionRequestEvent& event);

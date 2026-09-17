@@ -11,6 +11,9 @@
 #include "IGraphicsEditorDelegate.h"
 #include "IGraphics.h"
 #include "IControl.h"
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+#include "IGraphicsLinux.h"
+#endif
 
 using namespace iplug;
 using namespace igraphics;
@@ -34,6 +37,10 @@ void* IGEditorDelegate::OpenWindow(void* pParent)
       GetUI()->Resize(mLastWidth, mLastHeight, mLastScale);
   }
   
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  if (mGraphics)
+    static_cast<IGraphicsLinux*>(mGraphics.get())->SetHostDriven(mEditorHostDriven);
+#endif
   if(mGraphics)
     return mGraphics->OpenWindow(pParent);
   else
@@ -59,6 +66,27 @@ void IGEditorDelegate::CloseWindow()
     mClosing = false;
   }
 }
+
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+void IGEditorDelegate::SetEditorHostDriven(bool enabled)
+{
+  mEditorHostDriven = enabled;
+  if (mGraphics)
+    static_cast<IGraphicsLinux*>(mGraphics.get())->SetHostDriven(enabled);
+}
+
+void IGEditorDelegate::OnEditorHostFrame(const std::function<void()>& idle, bool draw)
+{
+  auto graphics = mGraphics; // Host popup callbacks can remove the editor.
+  if (graphics)
+    static_cast<IGraphicsLinux*>(graphics.get())->OnHostFrame(idle, draw);
+}
+
+unsigned IGEditorDelegate::GetEditorFrameInterval() const
+{
+  return mGraphics ? static_cast<unsigned>(std::max(1, 1000 / std::max(1, mGraphics->FPS()))) : 16;
+}
+#endif
 
 void IGEditorDelegate::OnParentWindowResize(int width, int height)
 {

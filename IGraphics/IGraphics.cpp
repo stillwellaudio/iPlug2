@@ -1465,6 +1465,13 @@ void IGraphics::SetPTParameterHighlight(int paramIdx, bool isHighlighted, int co
 
 void IGraphics::PopupHostContextMenuForParam(IControl* pControl, int paramIdx, float x, float y)
 {
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  ReleaseMouseCapture();
+  auto* api = dynamic_cast<VST3_API_BASE*>(GetDelegate());
+  if (!api || !api->GetView() || !api->GetView()->CanShowHostContextMenu())
+    return;
+  TraceVST3RunLoop("menu-enter", this);
+#endif
   IPopupMenu& contextMenu = mPromptPopupMenu;
   contextMenu.Clear();
 
@@ -1539,6 +1546,9 @@ void IGraphics::PopupHostContextMenuForParam(IControl* pControl, int paramIdx, f
 #endif
       pVST3ContextMenu->popup((Steinberg::UCoord) x, (Steinberg::UCoord) y);
       pVST3ContextMenu->release();
+#if defined OS_LINUX
+      TraceVST3RunLoop("menu-return", this);
+#endif
     }
 
 #else

@@ -75,6 +75,11 @@ public:
   
   /** Get a pointer to the IGraphics context */
   IGraphics* GetUI() { return mGraphics.get(); };
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  void SetEditorHostDriven(bool enabled);
+  void OnEditorHostFrame(const std::function<void()>& idle, bool draw);
+  unsigned GetEditorFrameInterval() const;
+#endif
 
   /** Get a const pointer to the IGraphics context */
   const IGraphics* GetUI() const { return mGraphics.get(); };
@@ -94,7 +99,12 @@ protected:
   std::function<IGraphics*()> mMakeGraphicsFunc = nullptr;
   std::function<void(IGraphics* pGraphics)> mLayoutFunc = nullptr;
 private:
+#if defined OS_LINUX && (defined VST3_API || defined VST3C_API)
+  std::shared_ptr<IGraphics> mGraphics;
+  bool mEditorHostDriven = false;
+#else
   std::unique_ptr<IGraphics> mGraphics;
+#endif
   int mLastWidth = 0;
   int mLastHeight = 0;
   float mLastScale = 0.f;
