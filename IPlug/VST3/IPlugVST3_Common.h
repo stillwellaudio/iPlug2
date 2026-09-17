@@ -67,6 +67,8 @@ struct IPlugVST3State
       chunk.PutBytes(buffer, bytesRead);
     }
     int pos = pPlug->UnserializeState(chunk,0);
+    if (pos < 0)
+      return false;
     
     Steinberg::int32 savedBypass = 0;
     
