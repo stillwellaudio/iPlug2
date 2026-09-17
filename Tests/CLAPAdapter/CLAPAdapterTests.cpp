@@ -10,6 +10,8 @@
 
 extern const clap_plugin_entry_t clap_entry;
 extern "C" void TriggerCLAPAdapterParamChange();
+extern "C" void CLAPAdapterSetZeroParameters(bool enabled);
+extern "C" int CLAPAdapterCurrentPreset();
 extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
@@ -210,8 +212,10 @@ struct PresetIndex
   }
 };
 
-void TestFactoryPresets()
+void TestFactoryPresets(bool zeroParameters = false)
 {
+  CLAPAdapterSetZeroParameters(zeroParameters);
+  const int errorsBefore = gPresetErrors;
   CHECK(clap_entry.init("/tmp/clapadaptertest.clap"));
   const auto* discovery = static_cast<const clap_preset_discovery_factory_t*>(clap_entry.get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID));
   CHECK(discovery);
@@ -264,8 +268,14 @@ void TestFactoryPresets()
       const int loaded = gPresetsLoaded;
       CHECK(load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, i ? "1" : "0"));
       double value = 0;
-      CHECK(params->get_value(plugin, 0, &value) && value == (i ? 0.75 : 0.25));
-      CHECK(params->get_value(plugin, 1, &value) && value == i);
+      CHECK(CLAPAdapterCurrentPreset() == i);
+      if (!zeroParameters)
+      {
+        CHECK(params->get_value(plugin, 0, &value) && value == (i ? 0.75 : 0.25));
+        CHECK(params->get_value(plugin, 1, &value) && value == i);
+      }
+      else
+        CHECK(params->count(plugin) == 0);
       CHECK(gRescanRequests == rescans + 1);
       CHECK(gPresetsLoaded == loaded + 1);
     }
@@ -273,12 +283,15 @@ void TestFactoryPresets()
       CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, key));
     CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN, nullptr, nullptr));
     CHECK(!load->from_location(plugin, CLAP_PRESET_DISCOVERY_LOCATION_FILE, "/tmp/foo", "0"));
-    CHECK(gPresetErrors == 9);
+    CHECK(gPresetErrors == errorsBefore + 9);
     double value = 0;
-    CHECK(params->get_value(plugin, 0, &value) && value == 0.75);
+    CHECK(CLAPAdapterCurrentPreset() == 1);
+    if (!zeroParameters)
+      CHECK(params->get_value(plugin, 0, &value) && value == 0.75);
   }
   plugin->destroy(plugin);
   clap_entry.deinit();
+  CLAPAdapterSetZeroParameters(false);
 }
 
 void TestEntryAndFactoryLifetime()
@@ -473,6 +486,7 @@ void TestAudioPortsStateAndFactoryValidation()
 int main(int argc, char** argv)
 {
   TestFactoryPresets();
+  TestFactoryPresets(true);
   if (argc == 2 && std::strcmp(argv[1], "--presets-only") == 0)
     return gFailures == 0 ? 0 : 1;
   TestEntryAndFactoryLifetime();
