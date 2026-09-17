@@ -734,6 +734,7 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         kX11None,
         event.xbutton.time);
 
+#ifndef IGRAPHICS_NO_CONTEXT_MENU
       // SWELL/GTK host menus consume button release as menu dismissal. Open
       // the VST3 host menu after releasing the initiating button, on the same
       // host UI thread. Retain the press position for the parameter hit test.
@@ -744,6 +745,8 @@ bool IGraphicsLinux::HandleXEvent(const XEvent& event)
         mImpl->hostRightButtonY = y;
         break;
       }
+
+#endif
 
       const Time clickTime = event.xbutton.time;
       const bool isDoubleClick = event.xbutton.button == mImpl->lastClickButton
