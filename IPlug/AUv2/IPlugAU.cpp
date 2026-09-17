@@ -1202,6 +1202,10 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
       if (connectionOK)
       {
         pBus->mNHostChannels = nHostChannels;
+        // A renegotiated output may already have rendered as mono. Force the
+        // next render to refresh per-channel connections before attaching it.
+        if (scope == kAudioUnitScope_Output)
+          pBus->mConnected = false;
         if (pASBD->mSampleRate > 0.0)
         {
           SetSampleRate(pASBD->mSampleRate);
