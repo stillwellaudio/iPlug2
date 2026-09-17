@@ -432,7 +432,9 @@ bool IPluginBase::RestorePreset(int idx)
     }
     else
     {
-      restoredOK = (UnserializeState(pPreset->mChunk, 0) > 0);
+      const int restoredPosition = UnserializeState(pPreset->mChunk, 0);
+      // A parameterless preset can successfully consume an empty state chunk.
+      restoredOK = restoredPosition > 0 || (restoredPosition == 0 && pPreset->mChunk.Size() == 0);
     }
     
     if (restoredOK)

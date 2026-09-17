@@ -7,6 +7,7 @@ using namespace iplug;
 namespace
 {
 CLAPAdapterPlugin* gLastPlugin = nullptr;
+bool gZeroParameters = false;
 #if defined OS_LINUX
 uintptr_t gLastParent = 0;
 bool gOpenWindowSucceeds = true;
@@ -14,14 +15,20 @@ bool gOpenWindowSucceeds = true;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
-  : Plugin(info, MakeConfig(2, 3))
+  : Plugin(info, MakeConfig(gZeroParameters ? 0 : 2, 3))
 {
   gLastPlugin = this;
-  GetParam(0)->InitDouble("Gain", 1.0, 0.0, 1.0, 0.01);
-  GetParam(1)->InitEnum("Mode", 0, {"Clip", "Limit"});
+  if (!gZeroParameters)
+  {
+    GetParam(0)->InitDouble("Gain", 1.0, 0.0, 1.0, 0.01);
+    GetParam(1)->InitEnum("Mode", 0, {"Clip", "Limit"});
+  }
   MakePreset("Quiet", 0.25, 0);
   MakePreset("Loud", 0.75, 1);
 }
+
+extern "C" void CLAPAdapterSetZeroParameters(bool enabled) { gZeroParameters = enabled; }
+extern "C" int CLAPAdapterCurrentPreset() { return gLastPlugin->GetCurrentPresetIdx(); }
 
 extern "C" void TriggerCLAPAdapterParamChange()
 {
