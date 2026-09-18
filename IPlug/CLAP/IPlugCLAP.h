@@ -104,6 +104,8 @@ public:
   bool SendSysEx(const ISysEx& msg) override;
 
 private:
+  bool mIsPresetDiscovery = false;
+
   // clap_plugin
   bool init() noexcept override;
   bool activate(double sampleRate, uint32_t minFrameCount, uint32_t maxFrameCount) noexcept override;
