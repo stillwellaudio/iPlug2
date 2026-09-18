@@ -33,6 +33,7 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   : IPlugAPIBase(config, kAPICLAP)
   , IPlugProcessor(config, kAPICLAP)
   , ClapPluginHelper(info.mDesc, info.mHost)
+  , mIsPresetDiscovery(info.mIsPresetDiscovery)
 {
   Trace(TRACELOC, "%s", config.pluginName);
   
@@ -52,8 +53,6 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   mAudioIO64.Resize(nChans);
   
   SetHost(info.mHost->name, version);
-  if (!info.mIsPresetDiscovery)
-    CreateTimer();
 }
 
 uint32_t IPlugCLAP::tailGet() const noexcept
@@ -147,6 +146,11 @@ bool IPlugCLAP::SendSysEx(const ISysEx& msg)
 bool IPlugCLAP::init() noexcept
 {
   SetDefaultConfig();
+
+  // The host calls init only after the most-derived plug-in constructor has
+  // completed, so the background timer cannot dispatch into a partial object.
+  if (!mIsPresetDiscovery)
+    CreateTimer();
   
   return true;
 }
