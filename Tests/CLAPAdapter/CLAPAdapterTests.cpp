@@ -13,6 +13,9 @@ extern "C" void TriggerCLAPAdapterParamChange();
 extern "C" void CLAPAdapterSetZeroParameters(bool enabled);
 extern "C" int CLAPAdapterCurrentPreset();
 extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
+extern "C" bool TriggerCLAPAdapterEditorResize(int width, int height);
+extern "C" int CLAPAdapterParentResizeCount();
+extern "C" void CLAPAdapterResetParentResizeCount();
 #if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
 extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds);
@@ -28,6 +31,9 @@ int gRestartRequests = 0;
 int gLatencyChanges = 0;
 int gPresetsLoaded = 0;
 int gPresetErrors = 0;
+int gResizeRequests = 0;
+uint32_t gLastResizeWidth = 0;
+uint32_t gLastResizeHeight = 0;
 
 #define CHECK(condition) \
   do \
@@ -68,6 +74,21 @@ const clap_host_preset_load_t kHostPresets {
   [](const clap_host_t*, uint32_t, const char*, const char*) { ++gPresetsLoaded; },
 };
 
+bool HostRequestResize(const clap_host_t*, uint32_t width, uint32_t height)
+{
+  ++gResizeRequests;
+  gLastResizeWidth = width;
+  gLastResizeHeight = height;
+  return true;
+}
+
+const clap_host_gui_t kHostGUI {
+  nullptr,
+  HostRequestResize,
+  nullptr,
+  nullptr,
+};
+
 const void* HostGetExtension(const clap_host_t*, const char* extensionId)
 {
   if (!extensionId)
@@ -78,6 +99,8 @@ const void* HostGetExtension(const clap_host_t*, const char* extensionId)
     return &kHostParams;
   if (std::strcmp(extensionId, CLAP_EXT_LATENCY) == 0)
     return &kHostLatency;
+  if (std::strcmp(extensionId, CLAP_EXT_GUI) == 0)
+    return &kHostGUI;
   return nullptr;
 }
 
@@ -335,9 +358,21 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(plugin != nullptr);
   CHECK(plugin && plugin->init(plugin));
 
-#if defined OS_LINUX
   const auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
   CHECK(gui != nullptr);
+
+  gResizeRequests = 0;
+  CLAPAdapterResetParentResizeCount();
+  CHECK(TriggerCLAPAdapterEditorResize(125, 125));
+  CHECK(gResizeRequests == 1);
+  CHECK(gLastResizeWidth == 125);
+  CHECK(gLastResizeHeight == 125);
+  CHECK(gui && gui->set_size(plugin, 125, 125));
+  CHECK(CLAPAdapterParentResizeCount() == 0);
+  CHECK(gui && gui->set_size(plugin, 120, 120));
+  CHECK(CLAPAdapterParentResizeCount() == 1);
+
+#if defined OS_LINUX
   CHECK(gui && gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false));
   CHECK(gui && !gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, true));
   CHECK(gui && !gui->is_api_supported(plugin, "wayland", false));
