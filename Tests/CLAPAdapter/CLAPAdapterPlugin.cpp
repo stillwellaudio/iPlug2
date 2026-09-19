@@ -8,10 +8,13 @@ namespace
 {
 CLAPAdapterPlugin* gLastPlugin = nullptr;
 bool gZeroParameters = false;
-#if defined OS_LINUX
+int gParentResizeCount = 0;
 uintptr_t gLastParent = 0;
 bool gOpenWindowSucceeds = true;
-#endif
+bool gEditorOpen = false;
+int gViewWidth = 100;
+int gViewHeight = 100;
+int gResizeOnOpen = 0;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
@@ -42,7 +45,28 @@ extern "C" void TriggerCLAPAdapterLatencyChange(int samples)
     gLastPlugin->SetLatency(samples);
 }
 
-#if defined OS_LINUX
+extern "C" bool TriggerCLAPAdapterEditorResize(int width, int height)
+{
+  return gLastPlugin && gLastPlugin->EditorResizeFromUI(width, height, true);
+}
+
+extern "C" int CLAPAdapterParentResizeCount() { return gParentResizeCount; }
+extern "C" void CLAPAdapterResetParentResizeCount() { gParentResizeCount = 0; }
+extern "C" int CLAPAdapterViewWidth() { return gViewWidth; }
+extern "C" int CLAPAdapterViewHeight() { return gViewHeight; }
+extern "C" void CLAPAdapterSetResizeOnOpen(int size) { gResizeOnOpen = size; }
+
+void CLAPAdapterPlugin::OnParentWindowResize(int width, int height)
+{
+  // IGraphics updates the child view here, not the adapter's stored size.
+  if (gEditorOpen)
+  {
+    ++gParentResizeCount;
+    gViewWidth = width;
+    gViewHeight = height;
+  }
+}
+
 extern "C" uintptr_t CLAPAdapterLastParent()
 {
   return gLastParent;
@@ -56,13 +80,24 @@ extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds)
 void* CLAPAdapterPlugin::OpenWindow(void* parent)
 {
   gLastParent = reinterpret_cast<uintptr_t>(parent);
+  gEditorOpen = gOpenWindowSucceeds;
+  if (gEditorOpen)
+  {
+    gViewWidth = gViewHeight = 100;
+    SetEditorSize(100, 100);
+    if (gResizeOnOpen)
+    {
+      gViewWidth = gViewHeight = gResizeOnOpen;
+      EditorResizeFromUI(gResizeOnOpen, gResizeOnOpen, true);
+    }
+  }
   return gOpenWindowSucceeds ? reinterpret_cast<void*>(UINTPTR_MAX) : nullptr;
 }
 
 void CLAPAdapterPlugin::CloseWindow()
 {
+  gEditorOpen = false;
 }
-#endif
 
 void CLAPAdapterPlugin::ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames)
 {
