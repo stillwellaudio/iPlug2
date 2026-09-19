@@ -92,8 +92,30 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
 {
   if (auto* pGraphics = GetUI()) 
   {
-    const auto scale = pGraphics->GetPlatformWindowScale();
-    pGraphics->Resize(static_cast<int>(width / scale), static_cast<int>(height / scale), 1.0f, false);
+    const auto platformScale = pGraphics->GetPlatformWindowScale();
+    const int windowWidth = static_cast<int>(width / platformScale);
+    const int windowHeight = static_cast<int>(height / platformScale);
+
+    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale)
+    {
+      // Host callbacks can acknowledge earlier UI requests after the next
+      // drag/snap request. Preserve the logical canvas instead of resetting
+      // its draw scale and turning that acknowledgment into a layout resize.
+      const int logicalWidth = pGraphics->Width();
+      const int logicalHeight = pGraphics->Height();
+      const float scaleX = static_cast<float>(windowWidth) / logicalWidth;
+      const float scaleY = static_cast<float>(windowHeight) / logicalHeight;
+      float drawScale = std::max(scaleX, scaleY);
+      // WindowWidth/Height truncate to integers. Step past floating-point
+      // rounding at the lower edge of the interval that recreates both sizes.
+      drawScale = std::nextafter(drawScale, drawScale + 1.f);
+      if (static_cast<int>(logicalWidth * drawScale) > windowWidth
+          || static_cast<int>(logicalHeight * drawScale) > windowHeight)
+        drawScale = std::min(scaleX, scaleY);
+      pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
+    }
+    else
+      pGraphics->Resize(windowWidth, windowHeight, 1.0f, false);
   }
 }
 

@@ -1,0 +1,91 @@
+"""Exercise the production host-resize delegate with scale and layout modes."""
+from pathlib import Path
+import os
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+class HostResizeScaleTests(unittest.TestCase):
+    def test_host_size_preserves_scaling_ui_coordinates(self):
+        source = (ROOT / "IGraphics/IGraphicsEditorDelegate.cpp").read_text()
+        start = source.index("void IGEditorDelegate::OnParentWindowResize(")
+        end = source.index("void IGEditorDelegate::SetScreenScale(", start)
+        method = source[start:end]
+        preamble = r'''
+#include <algorithm>
+#include <cmath>
+#include <cassert>
+#include <cstdio>
+enum class EUIResizerMode { Scale, Size };
+struct Graphics {
+  int width=720, height=464; float drawScale=1.25f, platformScale=1.f;
+  EUIResizerMode mode=EUIResizerMode::Scale; int calls=0; bool requestedHost=false;
+  int Width() const { return width; } int Height() const { return height; }
+  int WindowWidth() const { return int(float(width)*drawScale); }
+  int WindowHeight() const { return int(float(height)*drawScale); }
+  float GetPlatformWindowScale() const { return platformScale; }
+  EUIResizerMode GetResizerMode() const { return mode; }
+  void Resize(int w,int h,float scale,bool platform) {
+    width=w; height=h; drawScale=scale; requestedHost=platform; ++calls;
+  }
+};
+struct IGEditorDelegate {
+  Graphics* graphics=nullptr; Graphics* GetUI() { return graphics; }
+  void OnParentWindowResize(int width,int height);
+};
+'''
+        scenarios = r'''
+int main() {
+  IGEditorDelegate empty; empty.OnParentWindowResize(900,580);
+  Graphics graphics; IGEditorDelegate delegate; delegate.graphics=&graphics;
+  // Actual REAPER trace: drag request, release snap, then delayed acknowledgments.
+  delegate.OnParentWindowResize(907,584);
+  assert(graphics.Width()==720 && graphics.Height()==464);
+  assert(graphics.WindowWidth()==907 && graphics.WindowHeight()==584);
+  delegate.OnParentWindowResize(900,580);
+  assert(graphics.Width()==720 && graphics.Height()==464);
+  assert(graphics.WindowWidth()==900 && graphics.WindowHeight()==580);
+  assert(std::fabs(graphics.drawScale-1.25f)<0.00001f && !graphics.requestedHost);
+  // Repeated grow/shrink acknowledgments must not change the logical canvas.
+  for (float platform : {1.f,2.f}) {
+    graphics.platformScale=platform;
+    for (int step : {1250,1511,2000,1749,999,1333,1000}) {
+      const float scale=float(step)/1000.f;
+      const int w=int(720.f*scale), h=int(464.f*scale);
+      delegate.OnParentWindowResize(int(w*platform),int(h*platform));
+      assert(graphics.Width()==720 && graphics.Height()==464);
+      assert(graphics.WindowWidth()==w && graphics.WindowHeight()==h);
+      assert(!graphics.requestedHost);
+    }
+  }
+  // A nonuniform host rectangle fits the scaling UI without reshaping it.
+  graphics.platformScale=1.f;
+  delegate.OnParentWindowResize(1000,580);
+  assert(graphics.Width()==720 && graphics.Height()==464);
+  assert(graphics.WindowWidth()<=1000 && graphics.WindowHeight()<=580);
+  assert(std::fabs(graphics.drawScale-1.25f)<0.00001f);
+  // Layout resizers retain their existing resize-the-canvas behavior.
+  graphics.mode=EUIResizerMode::Size; graphics.platformScale=2.f;
+  delegate.OnParentWindowResize(1600,1200);
+  assert(graphics.Width()==800 && graphics.Height()==600);
+  assert(graphics.drawScale==1.f && !graphics.requestedHost);
+  std::puts("host resize scale/layout checks passed");
+}
+'''
+        compiler = "/Library/Developer/CommandLineTools/usr/bin/clang++"
+        if not Path(compiler).exists():
+            compiler = os.environ.get("CXX", "c++")
+        with tempfile.TemporaryDirectory(prefix="host-resize-scale-") as temp:
+            cpp = Path(temp) / "test.cpp"
+            cpp.write_text(preamble + method + scenarios)
+            binary = cpp.with_suffix("")
+            flags = ["-isysroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"] if Path(compiler).is_absolute() else []
+            result = subprocess.run([compiler,"-std=c++17",*flags,str(cpp),"-o",str(binary)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            result = subprocess.run([str(binary)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+if __name__ == "__main__":
+    unittest.main()
