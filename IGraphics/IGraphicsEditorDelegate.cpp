@@ -105,13 +105,24 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
       const int logicalHeight = pGraphics->Height();
       const float scaleX = static_cast<float>(windowWidth) / logicalWidth;
       const float scaleY = static_cast<float>(windowHeight) / logicalHeight;
-      float drawScale = std::max(scaleX, scaleY);
-      // WindowWidth/Height truncate to integers. Step past floating-point
-      // rounding at the lower edge of the interval that recreates both sizes.
-      drawScale = std::nextafter(drawScale, drawScale + 1.f);
-      if (static_cast<int>(logicalWidth * drawScale) > windowWidth
-          || static_cast<int>(logicalHeight * drawScale) > windowHeight)
-        drawScale = std::min(scaleX, scaleY);
+      const auto matches = [&](float scale) {
+        return static_cast<int>(logicalWidth * scale) == windowWidth
+            && static_cast<int>(logicalHeight * scale) == windowHeight;
+      };
+      float drawScale = pGraphics->GetDrawScale();
+      if (!matches(drawScale))
+      {
+        // Division and the two truncated products can round in opposite
+        // directions. Check the boundary and adjacent representable scales.
+        const float boundary = std::max(scaleX, scaleY);
+        drawScale = boundary;
+        if (!matches(drawScale))
+          drawScale = std::nextafter(boundary, 0.f);
+        if (!matches(drawScale))
+          drawScale = std::nextafter(boundary, boundary + 1.f);
+        if (!matches(drawScale))
+          drawScale = std::min(scaleX, scaleY); // Nonuniform host rectangle: fit.
+      }
       pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
     }
     else

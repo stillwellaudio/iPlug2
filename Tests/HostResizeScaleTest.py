@@ -26,6 +26,7 @@ struct Graphics {
   int WindowWidth() const { return int(float(width)*drawScale); }
   int WindowHeight() const { return int(float(height)*drawScale); }
   float GetPlatformWindowScale() const { return platformScale; }
+  float GetDrawScale() const { return drawScale; }
   EUIResizerMode GetResizerMode() const { return mode; }
   void Resize(int w,int h,float scale,bool platform) {
     width=w; height=h; drawScale=scale; requestedHost=platform; ++calls;
@@ -60,6 +61,22 @@ int main() {
       assert(!graphics.requestedHost);
     }
   }
+  // Rounding boundaries can differ by axis (100x140 at 1.05 -> 104x147).
+  for (int width : {100,600,720,790,1023}) for (int height : {140,350,400,464,777}) {
+    graphics.width=width; graphics.height=height; graphics.platformScale=1.f;
+    for (int step=501; step<=2000; ++step) {
+      const float scale=float(step)/1000.f;
+      const int w=int(float(width)*scale), h=int(float(height)*scale);
+      graphics.drawScale=1.5f; // Exercise reconstruction, not only current-size echoes.
+      delegate.OnParentWindowResize(w,h);
+      assert(graphics.Width()==width && graphics.Height()==height);
+      if (graphics.WindowWidth()!=w || graphics.WindowHeight()!=h) {
+        std::fprintf(stderr,"roundtrip %dx%d at %.9g: expected %dx%d got %dx%d\n",width,height,scale,w,h,graphics.WindowWidth(),graphics.WindowHeight());
+        return 1;
+      }
+    }
+  }
+  graphics.width=720; graphics.height=464;
   // A nonuniform host rectangle fits the scaling UI without reshaping it.
   graphics.platformScale=1.f;
   delegate.OnParentWindowResize(1000,580);
