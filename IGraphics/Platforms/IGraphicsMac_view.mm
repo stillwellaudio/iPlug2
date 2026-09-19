@@ -390,6 +390,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   self = [super initWithFrame:r];
   
   mMouseOutDuringDrag = false;
+  mScaleResizeDrag = false;
 
   self.wantsLayer = YES;
   self.layer.opaque = YES;
@@ -757,6 +758,18 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     {
       std::vector<IMouseInfo> list {info};
       mGraphics->OnMouseDown(list);
+
+      // The embedded view may move while a host handles a live resize. Anchor
+      // the drag in the parent window so that movement of the view itself does
+      // not feed back into the next resize calculation.
+      if (mGraphics->GetResizingInProcess())
+      {
+        mScaleResizeDrag = true;
+        mScaleResizeWindowStart = [pEvent locationInWindow];
+        mScaleResizeLocalStartX = info.x;
+        mScaleResizeLocalStartY = info.y;
+        mScaleResizeStartDrawScale = mGraphics->GetDrawScale();
+      }
     }
   }
 }
@@ -768,6 +781,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   {
     std::vector<IMouseInfo> list {info};
     mGraphics->OnMouseUp(list);
+    mScaleResizeDrag = false;
 
     if (mMouseOutDuringDrag)
     {
@@ -783,6 +797,17 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   float prevX = mPrevX;
   float prevY = mPrevY;
   IMouseInfo info = [self getMouseLeft:pEvent];
+  if (mGraphics && mScaleResizeDrag && mGraphics->GetResizingInProcess())
+  {
+    const NSPoint windowPoint = [pEvent locationInWindow];
+    const float drawScale = mGraphics->GetDrawScale();
+    const float physicalX = (mScaleResizeLocalStartX * mScaleResizeStartDrawScale)
+                          + static_cast<float>(windowPoint.x - mScaleResizeWindowStart.x);
+    const float physicalY = (mScaleResizeLocalStartY * mScaleResizeStartDrawScale)
+                          - static_cast<float>(windowPoint.y - mScaleResizeWindowStart.y);
+    info.x = physicalX / drawScale;
+    info.y = physicalY / drawScale;
+  }
   if (mGraphics && !mGraphics->IsInPlatformTextEntry())
   {
     info.dX = info.x - prevX;

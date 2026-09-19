@@ -94,11 +94,10 @@ bool IPlugCLAP::EditorResize(int viewWidth, int viewHeight)
   {
     if (viewWidth != GetEditorWidth() || viewHeight != GetEditorHeight())
     {
-      // Record the plug-in initiated size before asking the host. Some hosts
-      // synchronously acknowledge request_resize() with set_size().
-      SetEditorSize(viewWidth, viewHeight);
       GetClapHost().guiRequestResize(viewWidth, viewHeight);
     }
+
+    SetEditorSize(viewWidth, viewHeight);
   }
 
   return true;
@@ -1117,13 +1116,7 @@ bool IPlugCLAP::guiSetSize(uint32_t width, uint32_t height) noexcept
 
   if (HasUI())
   {
-    // An identical size is an acknowledgement of our request_resize(), not a
-    // host resize. Feeding it back into IGraphics would reset the draw scale
-    // during a corner drag. A different size remains a host adjustment/revert.
-    if (width != static_cast<uint32_t>(GetEditorWidth())
-        || height != static_cast<uint32_t>(GetEditorHeight()))
-      OnParentWindowResize(width, height);
-
+    OnParentWindowResize(width, height);
     return true;
   }
   else

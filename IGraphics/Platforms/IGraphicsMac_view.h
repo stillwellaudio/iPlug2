@@ -74,6 +74,7 @@ END_IPLUG_NAMESPACE
 
 @end
 
+
 @interface IGRAPHICS_TEXTFIELDCELL : NSTextFieldCell
 {
   BOOL mIsEditingOrSelecting;
@@ -124,6 +125,10 @@ using namespace igraphics;
   NSCursor* mMoveCursor;
   float mPrevX, mPrevY;
   bool mMouseOutDuringDrag;
+  bool mScaleResizeDrag;
+  NSPoint mScaleResizeWindowStart;
+  float mScaleResizeLocalStartX, mScaleResizeLocalStartY;
+  float mScaleResizeStartDrawScale;
   IRECTList mDirtyRects;
   IColorPickerHandlerFunc mColorPickerFunc;
 @public
@@ -183,4 +188,3 @@ using namespace igraphics;
 - (void) deactivateGLContext;
 
 @end
-
