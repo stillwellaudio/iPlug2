@@ -91,7 +91,7 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
 {
   GetDelegate()->ConstrainEditorResize(w, h);
   
-  scale = Clip(scale, mMinScale, mMaxScale);
+  scale = ConstrainDrawScale(scale);
   
   if (w == Width() && h == Height() && scale == GetDrawScale()) return;
   
