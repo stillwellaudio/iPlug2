@@ -90,6 +90,12 @@ void IPlugCLAP::EndInformHostOfParamChange(int idx)
 
 bool IPlugCLAP::EditorResize(int viewWidth, int viewHeight)
 {
+  // Opening an editor can report its old/default dimensions. A host size
+  // already accepted while closed takes precedence and will be applied as
+  // soon as the child exists, without sending a conflicting resize request.
+  if (!mGUIOpen && mHasPendingHostSize)
+    return true;
+
   if (HasUI())
   {
     if (viewWidth != GetEditorWidth() || viewHeight != GetEditorHeight())
@@ -97,7 +103,9 @@ bool IPlugCLAP::EditorResize(int viewWidth, int viewHeight)
       // Record the plug-in initiated size before asking the host. Some hosts
       // synchronously acknowledge request_resize() with set_size().
       SetEditorSize(viewWidth, viewHeight);
+      mEditorResizeRequestActive = true;
       GetClapHost().guiRequestResize(viewWidth, viewHeight);
+      mEditorResizeRequestActive = false;
     }
   }
 
@@ -1132,6 +1140,11 @@ bool IPlugCLAP::guiSetSize(uint32_t width, uint32_t height) noexcept
 
   if (HasUI())
   {
+    if (mEditorResizeRequestActive
+        && width == static_cast<uint32_t>(GetEditorWidth())
+        && height == static_cast<uint32_t>(GetEditorHeight()))
+      return true;
+
     if (!mGUIOpen)
     {
       SetEditorSize(width, height);

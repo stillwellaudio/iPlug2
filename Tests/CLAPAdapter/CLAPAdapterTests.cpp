@@ -20,6 +20,7 @@ extern "C" uintptr_t CLAPAdapterLastParent();
 extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds);
 extern "C" int CLAPAdapterViewWidth();
 extern "C" int CLAPAdapterViewHeight();
+extern "C" void CLAPAdapterSetResizeOnOpen(int size);
 
 namespace
 {
@@ -34,6 +35,8 @@ int gPresetErrors = 0;
 int gResizeRequests = 0;
 uint32_t gLastResizeWidth = 0;
 uint32_t gLastResizeHeight = 0;
+const clap_plugin_t* gResizePlugin = nullptr;
+int gResizeReply = 0;
 
 #define CHECK(condition) \
   do \
@@ -79,6 +82,11 @@ bool HostRequestResize(const clap_host_t*, uint32_t width, uint32_t height)
   ++gResizeRequests;
   gLastResizeWidth = width;
   gLastResizeHeight = height;
+  if (gResizePlugin && (gResizeReply == 1 || gResizeReply == 2))
+  {
+    const auto* gui = static_cast<const clap_plugin_gui_t*>(gResizePlugin->get_extension(gResizePlugin, CLAP_EXT_GUI));
+    gui->set_size(gResizePlugin, gResizeReply == 1 ? width : 160, gResizeReply == 1 ? height : 160);
+  }
   return true;
 }
 
@@ -404,6 +412,42 @@ void TestGUISizeLifecycle()
   CHECK(CLAPAdapterParentResizeCount() == 2);
   CHECK(CLAPAdapterViewWidth() == 100 && CLAPAdapterViewHeight() == 100);
   gui->destroy(plugin);
+
+  // Initial/default or saved-scale reports during OpenWindow must not
+  // supersede a size already accepted from the host while the UI was closed.
+  for (int reply = 0; reply < 3; ++reply)
+  {
+    CHECK(gui->create(plugin, window.api, false));
+    CHECK(gui->set_size(plugin, 110, 110));
+    CLAPAdapterResetParentResizeCount();
+    CLAPAdapterSetResizeOnOpen(175);
+    gResizePlugin = plugin;
+    gResizeReply = reply;
+    gResizeRequests = 0;
+    CHECK(gui->set_parent(plugin, &window));
+    CHECK(CLAPAdapterViewWidth() == 110 && CLAPAdapterViewHeight() == 110);
+    CHECK(CLAPAdapterParentResizeCount() == 1);
+    CHECK(gResizeRequests == 0);
+    CHECK(gui->get_size(plugin, &width, &height));
+    CHECK(width == 110 && height == 110);
+    gui->destroy(plugin);
+
+    // With no pending host size, restoring a scale may request its size.
+    // Matching synchronous acknowledgments must not resize the view again.
+    CHECK(gui->create(plugin, window.api, false));
+    CLAPAdapterResetParentResizeCount();
+    CHECK(gui->set_parent(plugin, &window));
+    const int expectedSize = reply < 2 ? 175 : 160;
+    CHECK(CLAPAdapterViewWidth() == expectedSize && CLAPAdapterViewHeight() == expectedSize);
+    CHECK(CLAPAdapterParentResizeCount() == (reply < 2 ? 0 : 1));
+    CHECK(gResizeRequests == 1);
+    CHECK(gui->get_size(plugin, &width, &height));
+    CHECK(width == static_cast<uint32_t>(expectedSize) && height == static_cast<uint32_t>(expectedSize));
+    gui->destroy(plugin);
+  }
+  CLAPAdapterSetResizeOnOpen(0);
+  gResizePlugin = nullptr;
+  gResizeReply = 0;
   plugin->destroy(plugin);
   clap_entry.deinit();
 }

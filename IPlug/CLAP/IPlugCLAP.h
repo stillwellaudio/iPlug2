@@ -223,6 +223,7 @@ private:
   void* mWindow = nullptr;
   bool mGUIOpen = false;
   bool mHasPendingHostSize = false;
+  bool mEditorResizeRequestActive = false;
   int mPendingHostWidth = 0;
   int mPendingHostHeight = 0;
 };

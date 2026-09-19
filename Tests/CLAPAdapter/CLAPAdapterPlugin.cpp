@@ -14,6 +14,7 @@ bool gOpenWindowSucceeds = true;
 bool gEditorOpen = false;
 int gViewWidth = 100;
 int gViewHeight = 100;
+int gResizeOnOpen = 0;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
@@ -53,6 +54,7 @@ extern "C" int CLAPAdapterParentResizeCount() { return gParentResizeCount; }
 extern "C" void CLAPAdapterResetParentResizeCount() { gParentResizeCount = 0; }
 extern "C" int CLAPAdapterViewWidth() { return gViewWidth; }
 extern "C" int CLAPAdapterViewHeight() { return gViewHeight; }
+extern "C" void CLAPAdapterSetResizeOnOpen(int size) { gResizeOnOpen = size; }
 
 void CLAPAdapterPlugin::OnParentWindowResize(int width, int height)
 {
@@ -83,6 +85,11 @@ void* CLAPAdapterPlugin::OpenWindow(void* parent)
   {
     gViewWidth = gViewHeight = 100;
     SetEditorSize(100, 100);
+    if (gResizeOnOpen)
+    {
+      gViewWidth = gViewHeight = gResizeOnOpen;
+      EditorResizeFromUI(gResizeOnOpen, gResizeOnOpen, true);
+    }
   }
   return gOpenWindowSucceeds ? reinterpret_cast<void*>(UINTPTR_MAX) : nullptr;
 }
