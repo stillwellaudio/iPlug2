@@ -96,37 +96,46 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
     const int windowWidth = static_cast<int>(width / platformScale);
     const int windowHeight = static_cast<int>(height / platformScale);
 
-    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale)
+    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale && !pGraphics->GetLayoutOnResize())
     {
       // Host callbacks can acknowledge earlier UI requests after the next
       // drag/snap request. Preserve the logical canvas instead of resetting
       // its draw scale and turning that acknowledgment into a layout resize.
       const int logicalWidth = pGraphics->Width();
       const int logicalHeight = pGraphics->Height();
-      const float scaleX = static_cast<float>(windowWidth) / logicalWidth;
-      const float scaleY = static_cast<float>(windowHeight) / logicalHeight;
+      // Platform dimensions truncate a second time at fractional display DPI.
+      // Round up to recover the original integer window dimensions, then
+      // require the reconstructed scale to reproduce the actual host size.
+      const int scaledWidth = static_cast<int>(std::ceil(width / platformScale));
+      const int scaledHeight = static_cast<int>(std::ceil(height / platformScale));
+      const float scaleX = static_cast<float>(scaledWidth) / logicalWidth;
+      const float scaleY = static_cast<float>(scaledHeight) / logicalHeight;
       const auto matches = [&](float scale) {
-        return static_cast<int>(logicalWidth * scale) == windowWidth
-            && static_cast<int>(logicalHeight * scale) == windowHeight;
+        return scale == pGraphics->ConstrainDrawScale(scale)
+            && static_cast<int>(static_cast<int>(logicalWidth * scale) * platformScale) == width
+            && static_cast<int>(static_cast<int>(logicalHeight * scale) * platformScale) == height;
       };
       float drawScale = pGraphics->GetDrawScale();
       if (!matches(drawScale))
       {
         // Division and the two truncated products can round in opposite
         // directions. Check the boundary and adjacent representable scales.
-        const float boundary = std::max(scaleX, scaleY);
+        const float boundary = pGraphics->ConstrainDrawScale(std::max(scaleX, scaleY));
         drawScale = boundary;
         if (!matches(drawScale))
           drawScale = std::nextafter(boundary, 0.f);
         if (!matches(drawScale))
           drawScale = std::nextafter(boundary, boundary + 1.f);
-        if (!matches(drawScale))
-          drawScale = std::min(scaleX, scaleY); // Nonuniform host rectangle: fit.
       }
-      pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
+      if (matches(drawScale))
+      {
+        pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
+        return;
+      }
     }
-    else
-      pGraphics->Resize(windowWidth, windowHeight, 1.0f, false);
+    // Responsive layouts and host sizes that cannot be represented by a
+    // permitted uniform scale keep the existing logical-canvas resize path.
+    pGraphics->Resize(windowWidth, windowHeight, 1.0f, false);
   }
 }
 
