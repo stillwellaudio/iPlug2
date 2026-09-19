@@ -16,10 +16,10 @@ extern "C" void TriggerCLAPAdapterLatencyChange(int samples);
 extern "C" bool TriggerCLAPAdapterEditorResize(int width, int height);
 extern "C" int CLAPAdapterParentResizeCount();
 extern "C" void CLAPAdapterResetParentResizeCount();
-#if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent();
 extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds);
-#endif
+extern "C" int CLAPAdapterViewWidth();
+extern "C" int CLAPAdapterViewHeight();
 
 namespace
 {
@@ -340,6 +340,74 @@ void TestEntryAndFactoryLifetime()
   CHECK(!clap_entry.init(""));
 }
 
+clap_window_t TestParentWindow()
+{
+  clap_window_t window {};
+#if defined __APPLE__
+  window.api = CLAP_WINDOW_API_COCOA;
+  window.cocoa = reinterpret_cast<void*>(0x1234);
+#elif defined _WIN32
+  window.api = CLAP_WINDOW_API_WIN32;
+  window.win32 = reinterpret_cast<void*>(0x1234);
+#else
+  window.api = CLAP_WINDOW_API_X11;
+  window.x11 = 0x1234;
+#endif
+  return window;
+}
+
+void TestGUISizeLifecycle()
+{
+  CHECK(clap_entry.init("/tmp/clapadaptertest.clap"));
+  const auto* factory = static_cast<const clap_plugin_factory_t*>(clap_entry.get_factory(CLAP_PLUGIN_FACTORY_ID));
+  clap_host_t host = MakeHost();
+  const auto* plugin = factory->create_plugin(factory, &host, factory->get_plugin_descriptor(factory, 0)->id);
+  CHECK(plugin && plugin->init(plugin));
+  const auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
+  auto window = TestParentWindow();
+  CHECK(gui->create(plugin, window.api, false));
+  CLAPAdapterResetParentResizeCount();
+
+  // A host can set the initial size before attaching the parent window.
+  CHECK(gui->set_size(plugin, 110, 115));
+  CHECK(CLAPAdapterParentResizeCount() == 0);
+  CHECK(gui->set_parent(plugin, &window));
+  CHECK(CLAPAdapterViewWidth() == 110 && CLAPAdapterViewHeight() == 115);
+  CHECK(CLAPAdapterParentResizeCount() == 1);
+  CHECK(gui->set_size(plugin, 110, 115));
+  CHECK(CLAPAdapterParentResizeCount() == 1);
+  uint32_t width = 0, height = 0;
+  CHECK(gui->get_size(plugin, &width, &height));
+  CHECK(width == 110 && height == 115);
+
+  // Hidden editors must receive the latest requested size after reopening.
+  CHECK(gui->hide(plugin));
+  CHECK(gui->set_size(plugin, 140, 145));
+  CHECK(gui->set_size(plugin, 150, 155));
+  CHECK(CLAPAdapterParentResizeCount() == 1);
+  CLAPAdapterSetOpenWindowSucceeds(false);
+  CHECK(!gui->show(plugin));
+  CHECK(CLAPAdapterParentResizeCount() == 1);
+  CLAPAdapterSetOpenWindowSucceeds(true);
+  CHECK(gui->show(plugin));
+  CHECK(CLAPAdapterViewWidth() == 150 && CLAPAdapterViewHeight() == 155);
+  CHECK(CLAPAdapterParentResizeCount() == 2);
+  CHECK(gui->get_size(plugin, &width, &height));
+  CHECK(width == 150 && height == 155);
+  CHECK(gui->show(plugin));
+  CHECK(CLAPAdapterParentResizeCount() == 2);
+  CHECK(gui->hide(plugin));
+  CHECK(gui->set_size(plugin, 175, 180));
+  gui->destroy(plugin);
+  CHECK(gui->create(plugin, window.api, false));
+  CHECK(gui->set_parent(plugin, &window));
+  CHECK(CLAPAdapterParentResizeCount() == 2);
+  CHECK(CLAPAdapterViewWidth() == 100 && CLAPAdapterViewHeight() == 100);
+  gui->destroy(plugin);
+  plugin->destroy(plugin);
+  clap_entry.deinit();
+}
+
 void TestAudioPortsStateAndFactoryValidation()
 {
   CHECK(clap_entry.init("/tmp/clapadaptertest.clap"));
@@ -361,6 +429,9 @@ void TestAudioPortsStateAndFactoryValidation()
   const auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
   CHECK(gui != nullptr);
 
+  auto initialWindow = TestParentWindow();
+  CHECK(gui && gui->create(plugin, initialWindow.api, false));
+  CHECK(gui && gui->set_parent(plugin, &initialWindow));
   gResizeRequests = 0;
   CLAPAdapterResetParentResizeCount();
   CHECK(TriggerCLAPAdapterEditorResize(125, 125));
@@ -536,6 +607,7 @@ int main(int argc, char** argv)
   if (argc == 2 && std::strcmp(argv[1], "--presets-only") == 0)
     return gFailures == 0 ? 0 : 1;
   TestEntryAndFactoryLifetime();
+  TestGUISizeLifecycle();
   TestAudioPortsStateAndFactoryValidation();
   return gFailures == 0 ? 0 : 1;
 }

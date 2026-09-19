@@ -1016,6 +1016,7 @@ void IPlugCLAP::guiDestroy() noexcept
   CloseWindow();
   mGUIOpen = false;
   mWindow = nullptr;
+  mHasPendingHostSize = false;
 }
 
 bool IPlugCLAP::guiShow() noexcept
@@ -1026,8 +1027,7 @@ bool IPlugCLAP::guiShow() noexcept
   if (mGUIOpen)
     return true;
 
-  mGUIOpen = OpenWindow(mWindow) != nullptr;
-  return mGUIOpen;
+  return OpenGUIWindow();
 }
 
 bool IPlugCLAP::guiHide() noexcept
@@ -1085,9 +1085,24 @@ bool IPlugCLAP::GUIWindowAttach(void* pWindow) noexcept
     return false;
 
   mWindow = pWindow;
-  mGUIOpen = OpenWindow(mWindow) != nullptr;
+  OpenGUIWindow();
   if (!mGUIOpen)
     mWindow = nullptr;
+  return mGUIOpen;
+}
+
+bool IPlugCLAP::OpenGUIWindow() noexcept
+{
+  mGUIOpen = OpenWindow(mWindow) != nullptr;
+  if (mGUIOpen && mHasPendingHostSize)
+  {
+    // set_size() may precede parent attachment or arrive while hidden.
+    // Creating the editor can report its default size, so restore the host's
+    // request only after the child view exists. Keep it pending if open fails.
+    mHasPendingHostSize = false;
+    SetEditorSize(mPendingHostWidth, mPendingHostHeight);
+    OnParentWindowResize(mPendingHostWidth, mPendingHostHeight);
+  }
   return mGUIOpen;
 }
 
@@ -1117,6 +1132,15 @@ bool IPlugCLAP::guiSetSize(uint32_t width, uint32_t height) noexcept
 
   if (HasUI())
   {
+    if (!mGUIOpen)
+    {
+      SetEditorSize(width, height);
+      mPendingHostWidth = width;
+      mPendingHostHeight = height;
+      mHasPendingHostSize = true;
+      return true;
+    }
+
     // An identical size is an acknowledgement of our request_resize(), not a
     // host resize. Feeding it back into IGraphics would reset the draw scale
     // during a corner drag. A different size remains a host adjustment/revert.

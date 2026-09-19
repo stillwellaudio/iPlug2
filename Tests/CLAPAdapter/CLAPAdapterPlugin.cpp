@@ -9,10 +9,11 @@ namespace
 CLAPAdapterPlugin* gLastPlugin = nullptr;
 bool gZeroParameters = false;
 int gParentResizeCount = 0;
-#if defined OS_LINUX
 uintptr_t gLastParent = 0;
 bool gOpenWindowSucceeds = true;
-#endif
+bool gEditorOpen = false;
+int gViewWidth = 100;
+int gViewHeight = 100;
 }
 
 CLAPAdapterPlugin::CLAPAdapterPlugin(const iplug::InstanceInfo& info)
@@ -50,14 +51,20 @@ extern "C" bool TriggerCLAPAdapterEditorResize(int width, int height)
 
 extern "C" int CLAPAdapterParentResizeCount() { return gParentResizeCount; }
 extern "C" void CLAPAdapterResetParentResizeCount() { gParentResizeCount = 0; }
+extern "C" int CLAPAdapterViewWidth() { return gViewWidth; }
+extern "C" int CLAPAdapterViewHeight() { return gViewHeight; }
 
 void CLAPAdapterPlugin::OnParentWindowResize(int width, int height)
 {
-  ++gParentResizeCount;
   // IGraphics updates the child view here, not the adapter's stored size.
+  if (gEditorOpen)
+  {
+    ++gParentResizeCount;
+    gViewWidth = width;
+    gViewHeight = height;
+  }
 }
 
-#if defined OS_LINUX
 extern "C" uintptr_t CLAPAdapterLastParent()
 {
   return gLastParent;
@@ -71,13 +78,19 @@ extern "C" void CLAPAdapterSetOpenWindowSucceeds(bool succeeds)
 void* CLAPAdapterPlugin::OpenWindow(void* parent)
 {
   gLastParent = reinterpret_cast<uintptr_t>(parent);
+  gEditorOpen = gOpenWindowSucceeds;
+  if (gEditorOpen)
+  {
+    gViewWidth = gViewHeight = 100;
+    SetEditorSize(100, 100);
+  }
   return gOpenWindowSucceeds ? reinterpret_cast<void*>(UINTPTR_MAX) : nullptr;
 }
 
 void CLAPAdapterPlugin::CloseWindow()
 {
+  gEditorOpen = false;
 }
-#endif
 
 void CLAPAdapterPlugin::ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames)
 {
