@@ -371,6 +371,17 @@ void TestAudioPortsStateAndFactoryValidation()
   CHECK(CLAPAdapterParentResizeCount() == 0);
   CHECK(gui && gui->set_size(plugin, 120, 120));
   CHECK(CLAPAdapterParentResizeCount() == 1);
+  uint32_t editorWidth = 0;
+  uint32_t editorHeight = 0;
+  CHECK(gui && gui->get_size(plugin, &editorWidth, &editorHeight));
+  CHECK(editorWidth == 120 && editorHeight == 120);
+  CHECK(gui && gui->set_size(plugin, 125, 125));
+  CHECK(CLAPAdapterParentResizeCount() == 2);
+  CHECK(gui && gui->get_size(plugin, &editorWidth, &editorHeight));
+  CHECK(editorWidth == 125 && editorHeight == 125);
+  CHECK(gui && gui->set_size(plugin, 125, 125));
+  CHECK(CLAPAdapterParentResizeCount() == 2);
+  CHECK(gResizeRequests == 1);
 
 #if defined OS_LINUX
   CHECK(gui && gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false));

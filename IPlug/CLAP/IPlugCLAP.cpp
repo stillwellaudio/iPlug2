@@ -1122,7 +1122,12 @@ bool IPlugCLAP::guiSetSize(uint32_t width, uint32_t height) noexcept
     // during a corner drag. A different size remains a host adjustment/revert.
     if (width != static_cast<uint32_t>(GetEditorWidth())
         || height != static_cast<uint32_t>(GetEditorHeight()))
+    {
+      // IGraphics handles host resizes without calling EditorResize(). Keep
+      // the adapter current so a later return to the previous size is applied.
+      SetEditorSize(width, height);
       OnParentWindowResize(width, height);
+    }
 
     return true;
   }

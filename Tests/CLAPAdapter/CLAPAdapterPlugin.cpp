@@ -54,7 +54,7 @@ extern "C" void CLAPAdapterResetParentResizeCount() { gParentResizeCount = 0; }
 void CLAPAdapterPlugin::OnParentWindowResize(int width, int height)
 {
   ++gParentResizeCount;
-  SetEditorSize(width, height);
+  // IGraphics updates the child view here, not the adapter's stored size.
 }
 
 #if defined OS_LINUX
