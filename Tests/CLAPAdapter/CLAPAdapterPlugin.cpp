@@ -8,7 +8,6 @@ namespace
 {
 CLAPAdapterPlugin* gLastPlugin = nullptr;
 bool gZeroParameters = false;
-int gParentResizeCount = 0;
 #if defined OS_LINUX
 uintptr_t gLastParent = 0;
 bool gOpenWindowSucceeds = true;
@@ -41,20 +40,6 @@ extern "C" void TriggerCLAPAdapterLatencyChange(int samples)
 {
   if (gLastPlugin)
     gLastPlugin->SetLatency(samples);
-}
-
-extern "C" bool TriggerCLAPAdapterEditorResize(int width, int height)
-{
-  return gLastPlugin && gLastPlugin->EditorResizeFromUI(width, height, true);
-}
-
-extern "C" int CLAPAdapterParentResizeCount() { return gParentResizeCount; }
-extern "C" void CLAPAdapterResetParentResizeCount() { gParentResizeCount = 0; }
-
-void CLAPAdapterPlugin::OnParentWindowResize(int width, int height)
-{
-  ++gParentResizeCount;
-  SetEditorSize(width, height);
 }
 
 #if defined OS_LINUX

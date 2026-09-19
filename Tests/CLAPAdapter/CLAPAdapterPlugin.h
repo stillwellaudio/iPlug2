@@ -7,7 +7,6 @@ class CLAPAdapterPlugin final : public iplug::Plugin
 public:
   explicit CLAPAdapterPlugin(const iplug::InstanceInfo& info);
   void ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames) override;
-  void OnParentWindowResize(int width, int height) override;
 #if defined OS_LINUX
   void* OpenWindow(void* parent) override;
   void CloseWindow() override;
