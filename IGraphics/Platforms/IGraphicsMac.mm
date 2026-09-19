@@ -102,6 +102,14 @@ void* IGraphicsMac::OpenWindow(void* pParent)
   
   if (pParent)
   {
+#if defined CLAP_API
+    // CLAP hosts may resize the parent after request_resize() returns. Keep
+    // the editor's top edge anchored when that deferred resize arrives.
+    [pView setAutoresizingMask:[(NSView*) pParent isFlipped] ? NSViewMaxYMargin : NSViewMinYMargin];
+    const NSRect parentBounds = [(NSView*) pParent bounds];
+    [pView setFrameOrigin:NSMakePoint(NSMinX(parentBounds), [(NSView*) pParent isFlipped]
+      ? NSMinY(parentBounds) : NSMaxY(parentBounds) - NSHeight([pView frame]))];
+#endif
     [(NSView*) pParent addSubview: pView];
   }
 
@@ -160,7 +168,22 @@ void IGraphicsMac::PlatformResize(bool parentHasResized)
 
     [NSAnimationContext beginGrouping]; // Prevent animated resizing
     [[NSAnimationContext currentContext] setDuration:0.0];
+#if defined CLAP_API
+    NSView* pView = (IGRAPHICS_VIEW*) mView;
+    if ([pView superview] && ![[pView superview] isFlipped])
+    {
+      // Resizing only the height would move the top edge until the host
+      // catches up. Preserve that edge in a bottom-origin parent instead.
+      NSRect frame = [pView frame];
+      frame.origin.y += frame.size.height - size.height;
+      frame.size = size;
+      [pView setFrame:frame];
+    }
+    else
+      [pView setFrameSize:size];
+#else
     [(IGRAPHICS_VIEW*) mView setFrameSize: size ];
+#endif
     
     [NSAnimationContext endGrouping];
   }

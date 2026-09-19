@@ -390,6 +390,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   self = [super initWithFrame:r];
   
   mMouseOutDuringDrag = false;
+  mScaleResizeDrag = false;
 
   self.wantsLayer = YES;
   self.layer.opaque = YES;
@@ -757,6 +758,19 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     {
       std::vector<IMouseInfo> list {info};
       mGraphics->OnMouseDown(list);
+
+      // Hosts may resize the embedded parent asynchronously, and resizing a
+      // top-anchored macOS window also moves its bottom-left origin. Keep the
+      // drag anchor in screen coordinates so neither movement feeds back into
+      // the scale calculation.
+      if (mGraphics->GetResizingInProcess())
+      {
+        mScaleResizeDrag = true;
+        mScaleResizeScreenStart = [[self window] convertPointToScreen:[pEvent locationInWindow]];
+        mScaleResizeLocalStartX = info.x;
+        mScaleResizeLocalStartY = info.y;
+        mScaleResizeStartDrawScale = mGraphics->GetDrawScale();
+      }
     }
   }
 }
@@ -768,6 +782,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   {
     std::vector<IMouseInfo> list {info};
     mGraphics->OnMouseUp(list);
+    mScaleResizeDrag = false;
 
     if (mMouseOutDuringDrag)
     {
@@ -783,6 +798,17 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   float prevX = mPrevX;
   float prevY = mPrevY;
   IMouseInfo info = [self getMouseLeft:pEvent];
+  if (mGraphics && mScaleResizeDrag && mGraphics->GetResizingInProcess())
+  {
+    const NSPoint screenPoint = [[self window] convertPointToScreen:[pEvent locationInWindow]];
+    const float drawScale = mGraphics->GetDrawScale();
+    const float physicalX = (mScaleResizeLocalStartX * mScaleResizeStartDrawScale)
+                          + static_cast<float>(screenPoint.x - mScaleResizeScreenStart.x);
+    const float physicalY = (mScaleResizeLocalStartY * mScaleResizeStartDrawScale)
+                          - static_cast<float>(screenPoint.y - mScaleResizeScreenStart.y);
+    info.x = physicalX / drawScale;
+    info.y = physicalY / drawScale;
+  }
   if (mGraphics && !mGraphics->IsInPlatformTextEntry())
   {
     info.dX = info.x - prevX;
