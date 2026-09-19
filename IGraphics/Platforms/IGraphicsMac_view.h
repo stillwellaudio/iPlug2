@@ -124,6 +124,10 @@ using namespace igraphics;
   NSCursor* mMoveCursor;
   float mPrevX, mPrevY;
   bool mMouseOutDuringDrag;
+  bool mScaleResizeDrag;
+  NSPoint mScaleResizeScreenStart;
+  float mScaleResizeLocalStartX, mScaleResizeLocalStartY;
+  float mScaleResizeStartDrawScale;
   IRECTList mDirtyRects;
   IColorPickerHandlerFunc mColorPickerFunc;
 @public
