@@ -18,6 +18,7 @@ class HostResizeScaleTests(unittest.TestCase):
 #include <cmath>
 #include <cassert>
 #include <cstdio>
+#include <cstdint>
 enum class EUIResizerMode { Scale, Size };
 struct Graphics {
   int width=720, height=464; float drawScale=1.25f, platformScale=1.f;
@@ -68,8 +69,9 @@ int main() {
     }
   }
   // Rounding boundaries can differ by axis (100x140 at 1.05 -> 104x147).
-  for (float platform : {1.f,1.25f,1.5f,1.75f,2.f})
+  for (int dpi=100; dpi<=300; ++dpi)
   for (int width : {100,600,720,790,1023}) for (int height : {140,350,400,464,777}) {
+    const float platform=float(dpi)/100.f;
     graphics.width=width; graphics.height=height; graphics.platformScale=platform;
     for (int step=501; step<=2000; ++step) {
       const float scale=float(step)/1000.f;
@@ -83,6 +85,26 @@ int main() {
       }
     }
   }
+  // Deterministic varied canvases, non-grid draw scales, and integer Windows DPI.
+  uint32_t random=0x7167bca1u;
+  const auto next=[&]() { random=random*1664525u+1013904223u; return random; };
+  for (int sample=0;sample<100000;++sample) {
+    const int w=100+int(next()%3901), h=100+int(next()%2901);
+    const float scale=.5f+float(next()%1500001)/1000000.f;
+    const float platform=float(96+next()%193)/96.f;
+    const int pw=int(int(w*scale)*platform), ph=int(int(h*scale)*platform);
+    graphics.width=w; graphics.height=h; graphics.drawScale=1.f; graphics.platformScale=platform;
+    delegate.OnParentWindowResize(pw,ph);
+    assert(graphics.Width()==w && graphics.Height()==h);
+    assert(int(graphics.WindowWidth()*platform)==pw && int(graphics.WindowHeight()*platform)==ph);
+  }
+  // Non-quarter DPI can round division just above the original integer size.
+  graphics.width=1021; graphics.height=864; graphics.platformScale=1.3f;
+  graphics.drawScale=1.f;
+  delegate.OnParentWindowResize(2314,1957);
+  assert(graphics.Width()==1021 && graphics.Height()==864);
+  assert(int(graphics.WindowWidth()*graphics.platformScale)==2314);
+  assert(int(graphics.WindowHeight()*graphics.platformScale)==1957);
   graphics.width=720; graphics.height=464;
   // Responsive editors with no stock resizer retain the default Scale enum.
   // Layout-on-resize must still reshape the canvas and invoke layout.

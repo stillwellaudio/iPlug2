@@ -104,10 +104,18 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
       const int logicalWidth = pGraphics->Width();
       const int logicalHeight = pGraphics->Height();
       // Platform dimensions truncate a second time at fractional display DPI.
-      // Round up to recover the original integer window dimensions, then
-      // require the reconstructed scale to reproduce the actual host size.
-      const int scaledWidth = static_cast<int>(std::ceil(width / platformScale));
-      const int scaledHeight = static_cast<int>(std::ceil(height / platformScale));
+      // Check the neighboring integer too: division can round just above
+      // an integer that already produces the requested platform dimension.
+      const auto innerDimension = [&](int dimension) {
+        int inner = static_cast<int>(std::ceil(dimension / platformScale));
+        if (static_cast<int>((inner - 1) * platformScale) == dimension)
+          --inner;
+        else if (static_cast<int>(inner * platformScale) < dimension)
+          ++inner;
+        return inner;
+      };
+      const int scaledWidth = innerDimension(width);
+      const int scaledHeight = innerDimension(height);
       const float scaleX = static_cast<float>(scaledWidth) / logicalWidth;
       const float scaleY = static_cast<float>(scaledHeight) / logicalHeight;
       const auto matches = [&](float scale) {
