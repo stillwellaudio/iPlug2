@@ -96,7 +96,10 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
     const int windowWidth = static_cast<int>(width / platformScale);
     const int windowHeight = static_cast<int>(height / platformScale);
 
-    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale && !pGraphics->GetLayoutOnResize())
+    // Layout-only editors retain the default Scale enum, but an explicitly
+    // attached Scale resizer can legitimately request layout callbacks too.
+    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale
+        && (pGraphics->HasCornerResizer() || !pGraphics->GetLayoutOnResize()))
     {
       // Host callbacks can acknowledge earlier UI requests after the next
       // drag/snap request. Preserve the logical canvas instead of resetting

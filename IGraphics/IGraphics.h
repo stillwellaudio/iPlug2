@@ -1177,6 +1177,9 @@ public:
   /** @return An EUIResizerMode Representing whether the graphics context should scale or be resized, e.g. when dragging a corner resizer */
   EUIResizerMode GetResizerMode() const { return mGUISizeMode; }
 
+  /** @return true if a corner resizer explicitly selected the resize mode. */
+  bool HasCornerResizer() const { return static_cast<bool>(mCornerResizer); }
+
   /** @return true if resizing is in process */
   bool GetResizingInProcess() const { return mResizingInProcess; }
 

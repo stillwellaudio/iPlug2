@@ -22,7 +22,7 @@ class HostResizeScaleTests(unittest.TestCase):
 enum class EUIResizerMode { Scale, Size };
 struct Graphics {
   int width=720, height=464; float drawScale=1.25f, platformScale=1.f;
-  EUIResizerMode mode=EUIResizerMode::Scale; int calls=0, layouts=0; bool requestedHost=false, layoutOnResize=false;
+  EUIResizerMode mode=EUIResizerMode::Scale; int calls=0, layouts=0; bool requestedHost=false, layoutOnResize=false, hasCornerResizer=false;
   float minScale=.5f, maxScale=2.f;
   int Width() const { return width; } int Height() const { return height; }
   int WindowWidth() const { return int(float(width)*drawScale); }
@@ -31,6 +31,7 @@ struct Graphics {
   float GetDrawScale() const { return drawScale; }
   EUIResizerMode GetResizerMode() const { return mode; }
   bool GetLayoutOnResize() const { return layoutOnResize; }
+  bool HasCornerResizer() const { return hasCornerResizer; }
   float ConstrainDrawScale(float scale) const { return std::max(minScale,std::min(scale,maxScale)); }
   void Resize(int w,int h,float scale,bool platform) {
     scale=ConstrainDrawScale(scale);
@@ -112,7 +113,18 @@ int main() {
   graphics.layoutOnResize=true; graphics.platformScale=1.f;
   delegate.OnParentWindowResize(1200,768);
   assert(graphics.Width()==1200 && graphics.Height()==768 && graphics.layouts==1);
-  graphics.layoutOnResize=false;
+  // Explicit Scale resizers may also request layout callbacks (IPlugControls).
+  graphics.width=720; graphics.height=464; graphics.drawScale=1.f;
+  graphics.hasCornerResizer=true;
+  delegate.OnParentWindowResize(900,580);
+  assert(graphics.Width()==720 && graphics.Height()==464);
+  assert(graphics.drawScale==1.25f && graphics.layouts==2);
+  // An explicit Size resizer still resizes the logical canvas.
+  graphics.mode=EUIResizerMode::Size;
+  delegate.OnParentWindowResize(800,600);
+  assert(graphics.Width()==800 && graphics.Height()==600 && graphics.layouts==3);
+  graphics.mode=EUIResizerMode::Scale;
+  graphics.hasCornerResizer=false; graphics.layoutOnResize=false;
   // Host constraints can permit sizes outside the UI's draw-scale limits.
   for (const auto size : {std::pair<int,int>{240,154}, {2160,1392}}) {
     graphics.width=720; graphics.height=464; graphics.drawScale=1.f;
