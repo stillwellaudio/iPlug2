@@ -186,6 +186,7 @@ private:
   
   // Helper to attach GUI Windows
   virtual bool GUIWindowAttach(void* parent) noexcept;
+  bool OpenGUIWindow() noexcept;
 
   // Parameter flushing from GUI
   void FlushParamsIfNeeded();
@@ -221,6 +222,10 @@ private:
   
   void* mWindow = nullptr;
   bool mGUIOpen = false;
+  bool mHasPendingHostSize = false;
+  bool mEditorResizeRequestActive = false;
+  int mPendingHostWidth = 0;
+  int mPendingHostHeight = 0;
 };
 
 class Plugin;
