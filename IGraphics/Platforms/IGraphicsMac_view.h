@@ -74,7 +74,6 @@ END_IPLUG_NAMESPACE
 
 @end
 
-
 @interface IGRAPHICS_TEXTFIELDCELL : NSTextFieldCell
 {
   BOOL mIsEditingOrSelecting;

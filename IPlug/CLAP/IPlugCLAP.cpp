@@ -96,10 +96,10 @@ bool IPlugCLAP::EditorResize(int viewWidth, int viewHeight)
     {
       GetClapHost().guiRequestResize(viewWidth, viewHeight);
     }
-
+    
     SetEditorSize(viewWidth, viewHeight);
   }
-
+  
   return true;
 }
 
