@@ -125,7 +125,7 @@ using namespace igraphics;
   float mPrevX, mPrevY;
   bool mMouseOutDuringDrag;
   bool mScaleResizeDrag;
-  NSPoint mScaleResizeWindowStart;
+  NSPoint mScaleResizeScreenStart;
   float mScaleResizeLocalStartX, mScaleResizeLocalStartY;
   float mScaleResizeStartDrawScale;
   IRECTList mDirtyRects;

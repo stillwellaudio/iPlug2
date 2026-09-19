@@ -759,13 +759,14 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
       std::vector<IMouseInfo> list {info};
       mGraphics->OnMouseDown(list);
 
-      // The embedded view may move while a host handles a live resize. Anchor
-      // the drag in the parent window so that movement of the view itself does
-      // not feed back into the next resize calculation.
+      // Hosts may resize the embedded parent asynchronously, and resizing a
+      // top-anchored macOS window also moves its bottom-left origin. Keep the
+      // drag anchor in screen coordinates so neither movement feeds back into
+      // the scale calculation.
       if (mGraphics->GetResizingInProcess())
       {
         mScaleResizeDrag = true;
-        mScaleResizeWindowStart = [pEvent locationInWindow];
+        mScaleResizeScreenStart = [[self window] convertPointToScreen:[pEvent locationInWindow]];
         mScaleResizeLocalStartX = info.x;
         mScaleResizeLocalStartY = info.y;
         mScaleResizeStartDrawScale = mGraphics->GetDrawScale();
@@ -799,12 +800,12 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   IMouseInfo info = [self getMouseLeft:pEvent];
   if (mGraphics && mScaleResizeDrag && mGraphics->GetResizingInProcess())
   {
-    const NSPoint windowPoint = [pEvent locationInWindow];
+    const NSPoint screenPoint = [[self window] convertPointToScreen:[pEvent locationInWindow]];
     const float drawScale = mGraphics->GetDrawScale();
     const float physicalX = (mScaleResizeLocalStartX * mScaleResizeStartDrawScale)
-                          + static_cast<float>(windowPoint.x - mScaleResizeWindowStart.x);
+                          + static_cast<float>(screenPoint.x - mScaleResizeScreenStart.x);
     const float physicalY = (mScaleResizeLocalStartY * mScaleResizeStartDrawScale)
-                          - static_cast<float>(windowPoint.y - mScaleResizeWindowStart.y);
+                          - static_cast<float>(screenPoint.y - mScaleResizeScreenStart.y);
     info.x = physicalX / drawScale;
     info.y = physicalY / drawScale;
   }
