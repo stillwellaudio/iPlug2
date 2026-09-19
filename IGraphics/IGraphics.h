@@ -1076,6 +1076,9 @@ public:
    * @param lo The minimum scalar that the IGraphics context can be scaled down to
    * @param hi The maxiumum scalar that the IGraphics context can be scaled up to */
   void SetScaleConstraints(float lo, float hi);
+
+  /** @return A draw scale within the configured UI scaling limits. */
+  float ConstrainDrawScale(float scale) const { return Clip(scale, mMinScale, mMaxScale); }
   
   /** \todo detailed description of how this works
    * @param w New width in pixels
@@ -1091,6 +1094,9 @@ public:
 
   /* Enables layout on resize. This means IGEditorDelegate:LayoutUI() will be called when the GUI is resized */
   void SetLayoutOnResize(bool layoutOnResize);
+
+  /** @return true if resizing should recompute the control layout. */
+  bool GetLayoutOnResize() const { return mLayoutOnResize; }
 
   /** Gets the width of the graphics context
    * @return A whole number representing the width of the graphics context in pixels on a 1:1 screen */
@@ -1170,6 +1176,9 @@ public:
   
   /** @return An EUIResizerMode Representing whether the graphics context should scale or be resized, e.g. when dragging a corner resizer */
   EUIResizerMode GetResizerMode() const { return mGUISizeMode; }
+
+  /** @return true if a corner resizer explicitly selected the resize mode. */
+  bool HasCornerResizer() const { return static_cast<bool>(mCornerResizer); }
 
   /** @return true if resizing is in process */
   bool GetResizingInProcess() const { return mResizingInProcess; }

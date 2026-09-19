@@ -92,8 +92,61 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
 {
   if (auto* pGraphics = GetUI()) 
   {
-    const auto scale = pGraphics->GetPlatformWindowScale();
-    pGraphics->Resize(static_cast<int>(width / scale), static_cast<int>(height / scale), 1.0f, false);
+    const auto platformScale = pGraphics->GetPlatformWindowScale();
+    const int windowWidth = static_cast<int>(width / platformScale);
+    const int windowHeight = static_cast<int>(height / platformScale);
+
+    // Layout-only editors retain the default Scale enum, but an explicitly
+    // attached Scale resizer can legitimately request layout callbacks too.
+    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale
+        && (pGraphics->HasCornerResizer() || !pGraphics->GetLayoutOnResize()))
+    {
+      // Host callbacks can acknowledge earlier UI requests after the next
+      // drag/snap request. Preserve the logical canvas instead of resetting
+      // its draw scale and turning that acknowledgment into a layout resize.
+      const int logicalWidth = pGraphics->Width();
+      const int logicalHeight = pGraphics->Height();
+      // Platform dimensions truncate a second time at fractional display DPI.
+      // Check the neighboring integer too: division can round just above
+      // an integer that already produces the requested platform dimension.
+      const auto innerDimension = [&](int dimension) {
+        int inner = static_cast<int>(std::ceil(dimension / platformScale));
+        if (static_cast<int>((inner - 1) * platformScale) == dimension)
+          --inner;
+        else if (static_cast<int>(inner * platformScale) < dimension)
+          ++inner;
+        return inner;
+      };
+      const int scaledWidth = innerDimension(width);
+      const int scaledHeight = innerDimension(height);
+      const float scaleX = static_cast<float>(scaledWidth) / logicalWidth;
+      const float scaleY = static_cast<float>(scaledHeight) / logicalHeight;
+      const auto matches = [&](float scale) {
+        return scale == pGraphics->ConstrainDrawScale(scale)
+            && static_cast<int>(static_cast<int>(logicalWidth * scale) * platformScale) == width
+            && static_cast<int>(static_cast<int>(logicalHeight * scale) * platformScale) == height;
+      };
+      float drawScale = pGraphics->GetDrawScale();
+      if (!matches(drawScale))
+      {
+        // Division and the two truncated products can round in opposite
+        // directions. Check the boundary and adjacent representable scales.
+        const float boundary = pGraphics->ConstrainDrawScale(std::max(scaleX, scaleY));
+        drawScale = boundary;
+        if (!matches(drawScale))
+          drawScale = std::nextafter(boundary, 0.f);
+        if (!matches(drawScale))
+          drawScale = std::nextafter(boundary, boundary + 1.f);
+      }
+      if (matches(drawScale))
+      {
+        pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
+        return;
+      }
+    }
+    // Responsive layouts and host sizes that cannot be represented by a
+    // permitted uniform scale keep the existing logical-canvas resize path.
+    pGraphics->Resize(windowWidth, windowHeight, 1.0f, false);
   }
 }
 
