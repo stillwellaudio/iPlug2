@@ -1235,6 +1235,11 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     {
       const bool bypassed = *((UInt32*) pData) != 0;
       SetBypassed(bypassed);
+      if (HandlesHostBypassInternally())
+      {
+        OnHostBypassChanged(bypassed);
+        return noErr;
+      }
       
       // TODO: should the following be called here?
       OnActivate(!bypassed);
@@ -1741,7 +1746,9 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
       _this->SetChannelConnections(ERoute::kOutput, nConnected, totalNumChans - nConnected, false); // this will disconnect the channels that are on the unconnected buses
     }
 
-    if (_this->GetBypassed())
+    if (_this->HandlesHostBypassInternally())
+      _this->OnHostBypassChanged(_this->GetBypassed());
+    if (_this->GetBypassed() && !_this->HandlesHostBypassInternally())
     {
       _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
     }

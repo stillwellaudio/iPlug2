@@ -507,7 +507,9 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
     BitterVST3LogAudio(data, setup, NChannelsConnected(ERoute::kInput), NChannelsConnected(ERoute::kOutput), GetBypassed());
 #endif
     
-    if (GetBypassed())
+    if (mPlug.HandlesHostBypassInternally())
+      mPlug.OnHostBypassChanged(GetBypassed());
+    if (GetBypassed() && !mPlug.HandlesHostBypassInternally())
     {
       if (sampleSize == kSample32)
         PassThroughBuffers(0.f, data.numSamples); // single precision

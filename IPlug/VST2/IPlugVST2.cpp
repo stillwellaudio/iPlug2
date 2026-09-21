@@ -919,13 +919,21 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
 
       return handled ? 1 : 0;
     }
+    case effSetBypass:
+    {
+      if (!_this->HandlesHostBypassInternally())
+        return 0;
+      const bool bypassed = value != 0;
+      _this->SetBypassed(bypassed);
+      _this->OnHostBypassChanged(bypassed);
+      return 1;
+    }
     case effEndSetProgram:
     case effBeginSetProgram:
     case effGetMidiProgramName:
     case effHasMidiProgramsChanged:
     case effGetMidiProgramCategory:
     case effGetCurrentMidiProgram:
-    case effSetBypass:
     default:
     {
       return 0;
