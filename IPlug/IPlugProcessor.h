@@ -96,6 +96,38 @@ public:
    * @param active \c true if the host has activated the plug-in */
   virtual void OnActivate(bool active) { TRACE }
 
+  /** Opt-in only. Called after successful adapter negotiation, outside rendering,
+   * with host lifecycle serialization. Never called from this base constructor.
+   * Initial publication and identity/order/activation changes notify; no-ops do not.
+   * Do not call IGraphics here. Copy/send metadata using existing editor messaging. */
+  virtual void OnBusLayoutChanged() {}
+
+  bool HasBusLayouts() const { return mBusLayoutPolicy != nullptr; }
+  bool BusLayoutsValid() const { return mBusLayoutsValid; }
+  const BusLayoutPolicy* GetBusLayoutPolicy() const { return mBusLayoutPolicy; }
+  /** Valid after adapter initialization. References expire at the next successful
+   * negotiation. Access on the negotiation thread, or audio thread while activated;
+   * UI threads must receive a copied snapshot via lifecycle synchronization/messages. */
+  const BusLayoutConfiguration* GetActiveBusLayoutConfiguration() const
+  { return mHasActiveBusLayout ? &mActiveBusLayout : nullptr; }
+  const LayoutBus* GetActiveBusLayout(ERoute direction, int bus) const;
+  int GetBusBufferOffset(ERoute direction, int bus) const;
+  int GetBusBufferCapacity(ERoute direction, int bus) const;
+  int GetActiveBusChannelCount(ERoute direction, int bus) const;
+  bool CanApplyBusLayout(const BusLayoutConfiguration& candidate) const;
+  /** Adapter lifecycle only: prepare format objects first, then publish. */
+  bool CommitBusLayout(BusLayoutConfiguration candidate);
+  bool SetBusLayoutActive(ERoute direction, int bus, bool active);
+
+  /** Opt-in block attachment: every bus uses immutable reserved offsets. No allocation.
+   * Call Begin once before attaching, including absent/inactive buses. Null/silent
+   * channels use zeroed scratch. Returns false on malformed block or bus widths. */
+  bool BeginBusLayoutBlock(int nFrames);
+  bool AttachBusBuffers(ERoute direction, int bus, int count, PLUG_SAMPLE_DST** buffers,
+                        int nFrames, uint64_t silenceMask = 0);
+  bool AttachBusBuffers(ERoute direction, int bus, int count, PLUG_SAMPLE_SRC** buffers,
+                        int nFrames, uint64_t silenceMask = 0);
+
 #pragma mark - Methods you can call - some of which have custom implementations in the API classes, some implemented in IPlugProcessor.cpp
 
   /** Send a single MIDI message // TODO: info about what thread should this be called on or not called on!
@@ -296,6 +328,16 @@ protected:
   sample** GetScratchData(ERoute direction) { return mScratchData[direction].Get(); }
 
 private:
+  int BusLayoutNumericShape(const BusLayoutConfiguration& candidate) const;
+  void ResizeBusLayoutDelay();
+  void PassThroughBusLayouts(sample** inputs, sample** outputs, int nFrames, bool delay);
+  const BusLayoutPolicy* mBusLayoutPolicy = nullptr;
+  bool mBusLayoutsValid = false;
+  bool mHasActiveBusLayout = false;
+  BusLayoutConfiguration mActiveBusLayout;
+  std::vector<int> mBusBufferOffsets[2];
+  std::vector<sample> mBusLayoutDelay;
+  int mBusLayoutDelayPosition = 0;
   /** See EIPlugPluginTypes */
   EIPlugPluginType mPlugType;
   /** \c true if the plug-in accepts MIDI input */

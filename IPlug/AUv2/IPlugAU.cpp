@@ -16,6 +16,7 @@
 #include "dfx-au-utilities.h"
 #include "IPlugAU.h"
 #include "IPlugAU_ioconfig.h"
+#include "IPlugAU_BusLayout.h"
 
 using namespace iplug;
 
@@ -248,9 +249,8 @@ OSStatus IPlugAU::IPlugAUEntry(ComponentParameters *params, void* pPlug)
       AudioUnitScope scope = GET_COMP_PARAM(AudioUnitScope, 3, 5);
       AudioUnitElement element = GET_COMP_PARAM(AudioUnitElement, 2, 5);
       const void* pData = GET_COMP_PARAM(const void*, 1, 5);
-      UInt32* pDataSize = GET_COMP_PARAM(UInt32*, 0, 5);
-      
-      return _this->DoSetProperty(_this, propID, scope, element, pData, pDataSize);
+      UInt32 size = GET_COMP_PARAM(UInt32, 0, 5);
+      return _this->DoSetProperty(_this, propID, scope, element, pData, &size);
     }
     case kAudioUnitAddPropertyListenerSelect:
     {
@@ -459,6 +459,10 @@ OSStatus IPlugAU::GetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
                                      UInt32* pDataSize, Boolean* pWriteable, void* pData)
 {
   Trace(TRACELOC, "%s(%d:%s):(%d:%s):%d", (pData ? "" : "info:"), propID, AUPropertyStr(propID), scope, AUScopeStr(scope), element);
+
+  if (HasBusLayouts() && (propID==kAudioUnitProperty_AudioChannelLayout || propID==kAudioUnitProperty_StreamFormat ||
+      propID==kAudioUnitProperty_SupportedChannelLayoutTags || propID==kAudioUnitProperty_ElementCount))
+    return GetBusLayoutProperty(propID,scope,element,pDataSize,pWriteable,pData);
 
   switch (propID)
   {
@@ -705,7 +709,29 @@ OSStatus IPlugAU::GetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     case kAudioUnitProperty_SupportedNumChannels:        // 13,
     {
       ASSERT_SCOPE(kAudioUnitScope_Global);
-      int n = NIOConfigs(); //TODO: THIS IS INCORRECT!
+      if (HasBusLayouts())
+      {
+        std::vector<AUChannelInfo> capabilities;
+        for (const auto& configuration:GetBusLayoutPolicy()->configurations)
+        {
+          AUChannelInfo info{};
+          SInt16* counts[]={&info.inChannels,&info.outChannels};
+          bool expressible=true;
+          for (int d=0;d<2;++d)
+          {
+            uint64_t total=0;
+            for (const auto& bus:configuration.buses[d]) total+=bus.layout.NChannels();
+            if (total>INT16_MAX || (configuration.buses[d].size()>1 && total<=2)) {expressible=false;break;}
+            *counts[d]=static_cast<SInt16>(configuration.buses[d].size()>1 ? -static_cast<int>(total) : total);
+          }
+          if (expressible && std::none_of(capabilities.begin(),capabilities.end(),[&](const AUChannelInfo& c) {return c.inChannels==info.inChannels && c.outChannels==info.outChannels;})) capabilities.push_back(info);
+        }
+        const UInt32 required=static_cast<UInt32>(capabilities.size()*sizeof(AUChannelInfo));
+        const UInt32 available=*pDataSize;*pDataSize=required;
+        if (pData) {if(available<required) return kAudioUnitErr_InvalidPropertyValue;if(required) std::memcpy(pData,capabilities.data(),required);}
+        return noErr;
+      }
+      int n = NIOConfigs(); // Legacy numeric advertisement.
       *pDataSize = n * sizeof(AUChannelInfo);
       if (pData)
       {
@@ -1111,7 +1137,16 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
 {
   Trace(TRACELOC, "(%d:%s):(%d:%s):%d", propID, AUPropertyStr(propID), scope, AUScopeStr(scope), element);
 
-  InformListeners(propID, scope);
+  if (HasBusLayouts() && (propID==kAudioUnitProperty_AudioChannelLayout || propID==kAudioUnitProperty_StreamFormat ||
+      propID==kAudioUnitProperty_ElementCount))
+    return SetBusLayoutProperty(propID,scope,element,pDataSize ? *pDataSize : 0,pData);
+  if (HasBusLayouts() && (propID==kAudioUnitProperty_MakeConnection || propID==kAudioUnitProperty_SetRenderCallback))
+  {
+    const UInt32 required=propID==kAudioUnitProperty_MakeConnection ? sizeof(AudioUnitConnection) : sizeof(AURenderCallbackStruct);
+    if (!pDataSize || *pDataSize!=required || !pData) return kAudioUnitErr_InvalidPropertyValue;
+  }
+  if (!HasBusLayouts() || (propID!=kAudioUnitProperty_MakeConnection && propID!=kAudioUnitProperty_SetRenderCallback))
+    InformListeners(propID, scope);
 
   switch (propID)
   {
@@ -1123,6 +1158,42 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     {
       ASSERT_INPUT_OR_GLOBAL_SCOPE;
       AudioUnitConnection* pAUC = (AudioUnitConnection*) pData;
+      if (HasBusLayouts())
+      {
+        if (scope!=kAudioUnitScope_Input || pAUC->destInputNumber>=mPendingBusLayouts.buses[0].size())
+          return kAudioUnitErr_InvalidElement;
+        InputBusConnection connection{};
+        if (pAUC->sourceAudioUnit)
+        {
+          STREAM_DESC stream{};UInt32 size=sizeof(stream);
+          const auto status=AudioUnitGetProperty(pAUC->sourceAudioUnit,kAudioUnitProperty_StreamFormat,
+            kAudioUnitScope_Output,pAUC->sourceOutputNumber,&stream,&size);
+          if (status!=noErr || size!=sizeof(stream)) return kAudioUnitErr_FormatNotSupported;
+          if (mActive)
+          {
+            STREAM_DESC current{};
+            MakeDefaultASBD(&current,GetSampleRate(),GetBus(kAudioUnitScope_Input,pAUC->destInputNumber)->mNHostChannels,false);
+            if (current.mSampleRate!=stream.mSampleRate || current.mFormatID!=stream.mFormatID ||
+                current.mFormatFlags!=stream.mFormatFlags || current.mBytesPerPacket!=stream.mBytesPerPacket ||
+                current.mFramesPerPacket!=stream.mFramesPerPacket || current.mBytesPerFrame!=stream.mBytesPerFrame ||
+                current.mChannelsPerFrame!=stream.mChannelsPerFrame || current.mBitsPerChannel!=stream.mBitsPerChannel)
+              return kAudioUnitErr_FormatNotSupported;
+          }
+          else
+          {
+            const auto formatStatus=SetBusLayoutProperty(kAudioUnitProperty_StreamFormat,kAudioUnitScope_Input,
+              pAUC->destInputNumber,sizeof(stream),&stream);
+            if (formatStatus!=noErr) return formatStatus;
+          }
+          connection.mUpstreamUnit=pAUC->sourceAudioUnit;connection.mUpstreamBusIdx=pAUC->sourceOutputNumber;
+          AudioUnitRenderProc renderProc=nullptr;size=sizeof(renderProc);
+          if (AudioUnitGetProperty(pAUC->sourceAudioUnit,kAudioUnitProperty_FastDispatch,kAudioUnitScope_Global,
+              kAudioUnitRenderSelect,&renderProc,&size)==noErr)
+          {connection.mUpstreamRenderProc=renderProc;connection.mUpstreamObj=GetComponentInstanceStorage(pAUC->sourceAudioUnit);}
+        }
+        *mInBusConnections.Get(pAUC->destInputNumber)=connection;
+        mBusLayoutRenderCached=false;AssessInputConnections();InformListeners(propID,scope);return noErr;
+      }
       if (pAUC->destInputNumber >= mInBusConnections.GetSize())
       {
         return kAudioUnitErr_InvalidProperty;
@@ -1217,6 +1288,14 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     NO_OP(kAudioUnitProperty_SupportedNumChannels);      // 13,
     case kAudioUnitProperty_MaximumFramesPerSlice:       // 14,
     {
+      if (HasBusLayouts())
+      {
+        if (mActive) return kAudioUnitErr_Initialized;
+        if (!pData || !pDataSize || *pDataSize!=sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
+        UInt32 frames; std::memcpy(&frames,pData,sizeof(frames));
+        const uint64_t channels=std::max(1,std::max(MaxNChannels(kInput),MaxNChannels(kOutput)));
+        if (!frames || frames*channels>INT32_MAX/sizeof(sample)) return kAudioUnitErr_InvalidPropertyValue;
+      }
       SetBlockSize(*((UInt32*) pData));
       ResizeScratchBuffers();
       OnReset();
@@ -1252,7 +1331,9 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
       {
         pInBusConn->mUpstreamRenderCallback = *pCS;
       }
+      if (HasBusLayouts()) mBusLayoutRenderCached=false;
       AssessInputConnections();
+      if (HasBusLayouts()) InformListeners(propID,scope);
       return noErr;
     }
     NO_OP(kAudioUnitProperty_FactoryPresets);            // 24,
@@ -1290,7 +1371,11 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     }
     case kAudioUnitProperty_OfflineRender:                // 37,
     {
+      if (HasBusLayouts() && (!pData || !pDataSize || *pDataSize!=sizeof(UInt32))) return kAudioUnitErr_InvalidPropertyValue;
       const bool renderingOffline = (*((UInt32*) pData) != 0);
+      // Offline render can restart at a timestamp used by live pre-roll.
+      // A cached output from the other render mode is not part of this cycle.
+      if (HasBusLayouts() && renderingOffline!=GetRenderingOffline()) mBusLayoutRenderCached=false;
       SetRenderingOffline(renderingOffline);
       return noErr;
     }
@@ -1594,6 +1679,7 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
   Trace(TRACELOC, "%d:%d:%d", outputBusIdx, pOutBufList->mNumberBuffers, nFrames);
 
   IPlugAU* _this = (IPlugAU*) pPlug;
+  if (_this->HasBusLayouts()) return _this->RenderBusLayouts(pFlags,pTimestamp,outputBusIdx,nFrames,pOutBufList);
   
   _this->mLastRenderTimeStamp = *pTimestamp;
 
@@ -1875,6 +1961,25 @@ IPlugAU::IPlugAU(const InstanceInfo& info, const Config& config)
   InitLatencyDelay();
 
   CreateTimer();
+
+  if (HasBusLayouts() && BusLayoutsValid())
+  {
+    mPendingBusLayouts=*GetBusLayoutPolicy()->Find(GetBusLayoutPolicy()->defaultID);
+    mPendingBusLayoutsValid=!mPendingBusLayouts.buses[1].empty();
+    for (int d=0; d<2; ++d)
+      for (size_t b=0; b<mPendingBusLayouts.buses[d].size(); ++b)
+      {
+        std::vector<uint8_t> bytes;
+        auto& bus=mPendingBusLayouts.buses[d][b];
+        if (bus.layout.NChannels()>AU_MAX_IO_CHANNELS || !aulayouts::ToNative(bus.layout,bytes)) mPendingBusLayoutsValid=false;
+        else aulayouts::FromNative(bytes.data(),bytes.size(),bus.layout.NChannels(),bus.layout);
+        mBusLayoutProperties[d].push_back(std::move(bytes));
+        mBusLayoutIsSet[d].push_back(true);
+        auto* numeric=GetBus(d ? kAudioUnitScope_Output : kAudioUnitScope_Input,static_cast<UInt32>(b));
+        numeric->mNHostChannels=bus.layout.NChannels();
+        numeric->mPlugChannelStartIdx=GetBusBufferOffset(static_cast<ERoute>(d),static_cast<int>(b));
+      }
+  }
 }
 
 IPlugAU::~IPlugAU()
@@ -2156,6 +2261,13 @@ OSStatus IPlugAU::AUMethodSetProperty(void* pSelf, AudioUnitPropertyID inID, Aud
   return DoSetProperty(GetPlug(pSelf), inID, inScope, inElement, inData, inDataSize);
 }
 
+// AudioComponent dispatch supplies the setter's byte count by value. Keep the
+// existing pointer-taking internal helper/source interface for compatibility.
+OSStatus IPlugAU::AUMethodSetPropertyV2(void* pSelf, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, const void* inData, UInt32 inDataSize)
+{
+  return DoSetProperty(GetPlug(pSelf),inID,inScope,inElement,inData,&inDataSize);
+}
+
 //static
 OSStatus IPlugAU::AUMethodAddPropertyListener(void* pSelf, AudioUnitPropertyID prop, AudioUnitPropertyListenerProc proc, void* userData)
 {
@@ -2232,6 +2344,7 @@ OSStatus IPlugAU::AUMethodSysEx(void* pSelf, const UInt8* inData, UInt32 inLengt
 //static
 OSStatus IPlugAU::DoInitialize(IPlugAU* _this)
 {
+  if (_this->HasBusLayouts() && _this->mActive) return noErr;
   if (_this->GetHost() == kHostUninit)
   {
     CFBundleRef mainBundle = CFBundleGetMainBundle();
@@ -2254,7 +2367,7 @@ OSStatus IPlugAU::DoInitialize(IPlugAU* _this)
     _this->SetHost(id ? CStrLocal(id).Get() : "", version);
   }
     
-  if (!(_this->CheckLegalIO()))
+  if (_this->HasBusLayouts() ? !_this->PublishPendingBusLayouts() : !_this->CheckLegalIO())
   {
     return badComponentSelector;
   }
@@ -2270,6 +2383,7 @@ OSStatus IPlugAU::DoInitialize(IPlugAU* _this)
 OSStatus IPlugAU::DoUninitialize(IPlugAU* _this)
 {
   _this->mActive = false;
+  _this->mBusLayoutRenderCached = false;
   _this->OnActivate(false);
   return noErr;
 }
@@ -2445,6 +2559,7 @@ OSStatus IPlugAU::DoRender(IPlugAU* _this, AudioUnitRenderActionFlags* ioActionF
 //static
 OSStatus IPlugAU::DoReset(IPlugAU* _this)
 {
+  _this->mBusLayoutRenderCached=false;
   _this->OnReset();
   return noErr;
 }
@@ -2483,3 +2598,271 @@ OSStatus IPlugAU::DoSysEx(IPlugAU* _this, const UInt8* inData, UInt32 inLength)
     return badComponentSelector;
 }
 
+OSStatus IPlugAU::GetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope scope, AudioUnitElement element,
+                                      UInt32* size, Boolean* writable, void* data)
+{
+  if (!size || !writable || !mPendingBusLayoutsValid) return kAudioUnitErr_InvalidPropertyValue;
+  if (prop==kAudioUnitProperty_ElementCount && scope==kAudioUnitScope_Global)
+  {
+    if (element) return kAudioUnitErr_InvalidElement;
+    const UInt32 available=*size; *size=sizeof(UInt32); *writable=false;
+    if (data) { if (available<sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue; const UInt32 count=1; std::memcpy(data,&count,sizeof(count)); }
+    return noErr;
+  }
+  if (scope!=kAudioUnitScope_Input && scope!=kAudioUnitScope_Output) return kAudioUnitErr_InvalidScope;
+  const int d=scope==kAudioUnitScope_Output;
+  if (prop!=kAudioUnitProperty_ElementCount && element>=mPendingBusLayouts.buses[d].size()) return kAudioUnitErr_InvalidElement;
+  std::vector<uint8_t> bytes;
+  const std::vector<uint8_t>* value=&bytes;
+  *writable=prop!=kAudioUnitProperty_SupportedChannelLayoutTags;
+  if (prop==kAudioUnitProperty_AudioChannelLayout)
+  {
+    if (!mBusLayoutIsSet[d][element])
+    { *size=0; return data ? kAudioUnitErr_PropertyNotInUse : noErr; }
+    value=&mBusLayoutProperties[d][element];
+  }
+  else if (prop==kAudioUnitProperty_StreamFormat)
+  {
+    STREAM_DESC stream;
+    MakeDefaultASBD(&stream,GetSampleRate(),GetBus(scope,element)->mNHostChannels,false);
+    bytes.resize(sizeof(stream)); std::memcpy(bytes.data(),&stream,sizeof(stream));
+  }
+  else if (prop==kAudioUnitProperty_ElementCount)
+  {
+    if (element) return kAudioUnitErr_InvalidElement;
+    const UInt32 count=static_cast<UInt32>(mPendingBusLayouts.buses[d].size());
+    bytes.resize(sizeof(count)); std::memcpy(bytes.data(),&count,sizeof(count));
+  }
+  else
+  {
+    std::vector<AudioChannelLayoutTag> tags;
+    for (const auto& c:GetBusLayoutPolicy()->configurations)
+    {
+      if (element>=c.buses[d].size()) continue;
+      std::vector<uint8_t> native;
+      if (!aulayouts::ToNative(c.buses[d][element].layout,native)) continue;
+      AudioChannelLayoutTag tag; std::memcpy(&tag,native.data(),sizeof(tag));
+      if (tag==kAudioChannelLayoutTag_UseChannelDescriptions)
+      {
+        AudioChannelLayoutTag named;UInt32 namedSize=sizeof(named);
+        if (AudioFormatGetProperty(kAudioFormatProperty_TagForChannelLayout,native.size(),native.data(),&namedSize,&named)==noErr &&
+            named!=kAudioChannelLayoutTag_UseChannelDescriptions && named!=kAudioChannelLayoutTag_UseChannelBitmap)
+        {
+          AudioChannelLayout header{};header.mChannelLayoutTag=named;BusLayout mapped;
+          if (aulayouts::FromNative(&header,aulayouts::kHeaderSize,c.buses[d][element].layout.NChannels(),mapped) &&
+              mapped.SameMeaning(c.buses[d][element].layout)) tag=named;
+        }
+      }
+      if (std::find(tags.begin(),tags.end(),tag)==tags.end()) tags.push_back(tag);
+    }
+    if (GetBusLayoutPolicy()->accept && std::find(tags.begin(),tags.end(),kAudioChannelLayoutTag_UseChannelDescriptions)==tags.end())
+      tags.push_back(kAudioChannelLayoutTag_UseChannelDescriptions);
+    bytes.resize(tags.size()*sizeof(AudioChannelLayoutTag));
+    if (!bytes.empty()) std::memcpy(bytes.data(),tags.data(),bytes.size());
+  }
+  const UInt32 available=*size;
+  *size=static_cast<UInt32>(value->size());
+  if (data)
+  {
+    if (available<value->size()) return kAudioUnitErr_InvalidPropertyValue;
+    if (!value->empty()) std::memcpy(data,value->data(),value->size());
+  }
+  return noErr;
+}
+
+OSStatus IPlugAU::SetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope scope, AudioUnitElement element,
+                                      UInt32 size, const void* data)
+{
+  if (!mPendingBusLayoutsValid) return kAudioUnitErr_InvalidPropertyValue;
+  if (scope!=kAudioUnitScope_Input && scope!=kAudioUnitScope_Output) return kAudioUnitErr_InvalidScope;
+  const int d=scope==kAudioUnitScope_Output;
+  if (mActive && prop!=kAudioUnitProperty_AudioChannelLayout) return kAudioUnitErr_Initialized;
+  if (prop==kAudioUnitProperty_ElementCount)
+  {
+    if (element || !data || size!=sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
+    UInt32 count; std::memcpy(&count,data,sizeof(count));
+    if (count==mPendingBusLayouts.buses[d].size()) return noErr;
+    const BusLayoutConfiguration* source=nullptr;
+    for (const auto& c:GetBusLayoutPolicy()->configurations) if (c.buses[d].size()==count) {source=&c;break;}
+    if (!source) return kAudioUnitErr_InvalidPropertyValue;
+    auto buses=mPendingBusLayouts.buses[d];
+    auto properties=mBusLayoutProperties[d]; auto isSet=mBusLayoutIsSet[d];
+    const size_t old=buses.size();
+    buses.resize(count); properties.resize(count); isSet.resize(count,true);
+    for (size_t b=old;b<count;++b)
+    {
+      buses[b]=source->buses[d][b];
+      if (buses[b].layout.NChannels()>AU_MAX_IO_CHANNELS || !aulayouts::ToNative(buses[b].layout,properties[b])) return kAudioUnitErr_InvalidPropertyValue;
+      aulayouts::FromNative(properties[b].data(),properties[b].size(),buses[b].layout.NChannels(),buses[b].layout);
+    }
+    mPendingBusLayouts.buses[d]=std::move(buses);mBusLayoutProperties[d]=std::move(properties);mBusLayoutIsSet[d]=std::move(isSet);
+    for (size_t b=old;b<count;++b) GetBus(scope,static_cast<UInt32>(b))->mNHostChannels=mPendingBusLayouts.buses[d][b].layout.NChannels();
+    mBusLayoutRenderCached=false;
+    InformListeners(prop,scope);
+    return noErr;
+  }
+  if (element>=mPendingBusLayouts.buses[d].size()) return kAudioUnitErr_InvalidElement;
+  auto* bus=GetBus(scope,element);
+  if (prop==kAudioUnitProperty_StreamFormat)
+  {
+    if (!data || size!=sizeof(STREAM_DESC)) return kAudioUnitErr_InvalidPropertyValue;
+    STREAM_DESC stream;std::memcpy(&stream,data,sizeof(stream));
+    if (!stream.mChannelsPerFrame || stream.mChannelsPerFrame>AU_MAX_IO_CHANNELS ||
+        stream.mChannelsPerFrame>static_cast<UInt32>(GetBusBufferCapacity(static_cast<ERoute>(d),element)) ||
+        stream.mFormatID!=kAudioFormatLinearPCM || !std::isfinite(stream.mSampleRate) || stream.mSampleRate<=0 ||
+        stream.mFormatFlags!=(kAudioFormatFlagsCanonical | kAudioFormatFlagIsNonInterleaved) ||
+        stream.mBitsPerChannel!=sizeof(AudioSampleType)*8 || stream.mFramesPerPacket!=1 ||
+        stream.mBytesPerFrame!=sizeof(AudioSampleType) || stream.mBytesPerPacket!=sizeof(AudioSampleType)) return kAudioUnitErr_FormatNotSupported;
+    bool declaredWidth=GetBusLayoutPolicy()->accept!=nullptr;
+    for (const auto& c:GetBusLayoutPolicy()->configurations)
+      if (element<c.buses[d].size() && c.buses[d][element].layout.NChannels()==stream.mChannelsPerFrame) declaredWidth=true;
+    if (!declaredWidth) return kAudioUnitErr_FormatNotSupported;
+    // Width changes alone cannot supply speaker/ambisonic identity.
+    const bool widthChanged=stream.mChannelsPerFrame!=static_cast<UInt32>(bus->mNHostChannels);
+    const bool rateChanged=GetSampleRate()!=stream.mSampleRate;
+    if (!widthChanged && !rateChanged) return noErr;
+    bus->mNHostChannels=stream.mChannelsPerFrame;
+    if (widthChanged)
+    {
+      mPendingBusLayouts.buses[d][element].layout=BusLayout::Discrete(stream.mChannelsPerFrame,true);
+      aulayouts::ToNative(mPendingBusLayouts.buses[d][element].layout,mBusLayoutProperties[d][element]);
+      mBusLayoutIsSet[d][element]=true;
+    }
+    SetSampleRate(stream.mSampleRate);mBusLayoutRenderCached=false;
+    InformListeners(prop,scope);
+    if (widthChanged) InformListeners(kAudioUnitProperty_AudioChannelLayout,scope);
+    return noErr;
+  }
+  BusLayout layout;
+  std::vector<uint8_t> bytes;
+  const bool set=size!=0;
+  if (!set) layout=BusLayout::Discrete(bus->mNHostChannels,true);
+  else
+  {
+    if (!aulayouts::FromNative(data,size,GetBusBufferCapacity(static_cast<ERoute>(d),element),layout) ||
+        !aulayouts::ToNative(layout,bytes)) return kAudioUnitErr_InvalidPropertyValue;
+    bool permitted=GetBusLayoutPolicy()->accept!=nullptr;
+    for (const auto& c:GetBusLayoutPolicy()->configurations)
+      if (element<c.buses[d].size() && c.buses[d][element].layout.SameMeaning(layout)) permitted=true;
+    if (!permitted) return kAudioUnitErr_InvalidPropertyValue;
+  }
+  if (mBusLayoutIsSet[d][element]==set && mPendingBusLayouts.buses[d][element].layout==layout) return noErr;
+  const bool widthChanged=layout.NChannels()!=static_cast<UInt32>(bus->mNHostChannels);
+  if (mActive)
+  {
+    // AU permits a same-width property edit after initialization. Publish only
+    // a complete valid state; width/topology changes still require uninitialize.
+    if (widthChanged) return kAudioUnitErr_Initialized;
+    auto candidate=mPendingBusLayouts;candidate.buses[d][element].layout=layout;
+    if (!CanApplyBusLayout(candidate)) return kAudioUnitErr_InvalidPropertyValue;
+    if (!CommitBusLayout(std::move(candidate))) return kAudioUnitErr_InvalidPropertyValue;
+  }
+  bus->mNHostChannels=layout.NChannels();
+  mPendingBusLayouts.buses[d][element].layout=std::move(layout);
+  mBusLayoutProperties[d][element]=std::move(bytes);mBusLayoutIsSet[d][element]=set;
+  mBusLayoutRenderCached=false;
+  InformListeners(prop,scope);
+  if (widthChanged) InformListeners(kAudioUnitProperty_StreamFormat,scope);
+  return noErr;
+}
+
+bool IPlugAU::PublishPendingBusLayouts()
+{
+  if (!mPendingBusLayoutsValid || mPendingBusLayouts.buses[1].empty()) return false;
+  auto candidate=mPendingBusLayouts;
+  for (int d=0;d<2;++d)
+    for (size_t b=0;b<candidate.buses[d].size();++b)
+      if (candidate.buses[d][b].layout.NChannels()!=static_cast<uint32_t>(GetBus(d ? kAudioUnitScope_Output : kAudioUnitScope_Input,b)->mNHostChannels)) return false;
+  if (!CanApplyBusLayout(candidate)) return false;
+      AssessInputConnections();
+  mBusLayoutRenderCached=false;
+  return CommitBusLayout(std::move(candidate));
+}
+
+OSStatus IPlugAU::RenderBusLayouts(AudioUnitRenderActionFlags* flags, const AudioTimeStamp* timestamp,
+                                  UInt32 outputBus, UInt32 frames, AudioBufferList* output)
+{
+  const auto* active=GetActiveBusLayoutConfiguration();
+  if (!mActive || !active) return kAudioUnitErr_Uninitialized;
+  if (!timestamp || !flags || !output || outputBus>=active->buses[1].size() || frames>static_cast<UInt32>(GetBlockSize()) ||
+      !(timestamp->mFlags & kAudioTimeStampSampleTimeValid) || !std::isfinite(timestamp->mSampleTime)) return kAudioUnitErr_InvalidPropertyValue;
+  const auto& outBus=active->buses[1][outputBus];
+  if (output->mNumberBuffers!=outBus.layout.NChannels()) return kAudioUnitErr_InvalidPropertyValue;
+  for (UInt32 c=0;c<output->mNumberBuffers;++c)
+    if (output->mBuffers[c].mNumberChannels!=1 ||
+        (output->mBuffers[c].mData && output->mBuffers[c].mDataByteSize<frames*sizeof(AudioSampleType))) return kAudioUnitErr_InvalidPropertyValue;
+  if (!frames) return noErr;
+  for (int i=0;i<mRenderNotify.GetSize();++i)
+  {
+    AudioUnitRenderActionFlags action=kAudioUnitRenderAction_PreRender;
+    auto* callback=mRenderNotify.Get(i);
+    callback->inputProc(callback->inputProcRefCon,&action,timestamp,outputBus,frames,output);
+  }
+  if (!mBusLayoutRenderCached || timestamp->mSampleTime!=mLastRenderSampleTime)
+  {
+    if (!BeginBusLayoutBlock(frames)) return kAudioUnitErr_InvalidPropertyValue;
+    std::memset(mOutScratchBuf.Get(),0,static_cast<size_t>(MaxNChannels(kOutput))*GetBlockSize()*sizeof(AudioSampleType));
+    for (size_t b=0;b<active->buses[0].size();++b)
+    {
+      const auto* bus=mInBuses.Get(b);const auto* connection=mInBusConnections.Get(b);
+      if (!active->buses[0][b].active || !bus->mConnected) continue;
+      BufferList list{};auto* buffers=reinterpret_cast<AudioBufferList*>(&list);
+      buffers->mNumberBuffers=active->buses[0][b].layout.NChannels();
+      AudioSampleType* pointers[AU_MAX_IO_CHANNELS];
+      const int offset=GetBusBufferOffset(kInput,b);
+      for (UInt32 c=0;c<buffers->mNumberBuffers;++c)
+      {
+        auto& buffer=buffers->mBuffers[c];buffer.mNumberChannels=1;buffer.mDataByteSize=frames*sizeof(AudioSampleType);
+        buffer.mData=mInScratchBuf.Get()+(offset+c)*GetBlockSize();
+        std::memset(buffer.mData,0,buffer.mDataByteSize);
+      }
+      AudioUnitRenderActionFlags inputFlags=0;OSStatus status=noErr;
+      if (connection->mInputType==eDirectFastProc)
+        status=connection->mUpstreamRenderProc(connection->mUpstreamObj,&inputFlags,timestamp,connection->mUpstreamBusIdx,frames,buffers);
+      else if (connection->mInputType==eDirectNoFastProc)
+        status=AudioUnitRender(connection->mUpstreamUnit,&inputFlags,timestamp,connection->mUpstreamBusIdx,frames,buffers);
+      else if (connection->mInputType==eRenderCallback)
+      {
+        auto callback=connection->mUpstreamRenderCallback;
+        status=callback.inputProc(callback.inputProcRefCon,&inputFlags,timestamp,b,frames,buffers);
+      }
+      if (status!=noErr) return status;
+      if (buffers->mNumberBuffers!=active->buses[0][b].layout.NChannels()) return kAudioUnitErr_InvalidPropertyValue;
+      for (UInt32 c=0;c<buffers->mNumberBuffers;++c)
+      {
+        if (buffers->mBuffers[c].mNumberChannels!=1 ||
+            (buffers->mBuffers[c].mData && buffers->mBuffers[c].mDataByteSize<frames*sizeof(AudioSampleType))) return kAudioUnitErr_InvalidPropertyValue;
+        pointers[c]=(inputFlags & kAudioUnitRenderAction_OutputIsSilence) ? nullptr : static_cast<AudioSampleType*>(buffers->mBuffers[c].mData);
+      }
+      AttachBusBuffers(kInput,b,buffers->mNumberBuffers,pointers,frames);
+    }
+    for (size_t b=0;b<active->buses[1].size();++b)
+    {
+      AudioSampleType* pointers[AU_MAX_IO_CHANNELS];const int offset=GetBusBufferOffset(kOutput,b);
+      for (UInt32 c=0;c<active->buses[1][b].layout.NChannels();++c) pointers[c]=mOutScratchBuf.Get()+(offset+c)*GetBlockSize();
+      AttachBusBuffers(kOutput,b,active->buses[1][b].layout.NChannels(),pointers,frames);
+    }
+    IMidiMsg midi;while (mMidiMsgsFromEditor.Pop(midi)) ProcessMidiMsg(midi);
+    mLastRenderTimeStamp=*timestamp;PreProcess();
+    if (GetBypassed()) PassThroughBuffers(AudioSampleType(0),frames);
+    else ProcessBuffers(AudioSampleType(0),frames);
+    mLastRenderSampleTime=timestamp->mSampleTime;mBusLayoutRenderFrames=frames;mBusLayoutRenderCached=true;
+  }
+  else if (frames!=mBusLayoutRenderFrames) return kAudioUnitErr_InvalidPropertyValue;
+  const int offset=GetBusBufferOffset(kOutput,outputBus);
+  for (UInt32 c=0;c<output->mNumberBuffers;++c)
+  {
+    const auto* source=mOutScratchBuf.Get()+(offset+c)*GetBlockSize();
+    if (!output->mBuffers[c].mData) output->mBuffers[c].mData=const_cast<AudioSampleType*>(source);
+    else if (output->mBuffers[c].mData!=source) std::memcpy(output->mBuffers[c].mData,source,frames*sizeof(AudioSampleType));
+    output->mBuffers[c].mDataByteSize=frames*sizeof(AudioSampleType);
+  }
+  *flags &= ~kAudioUnitRenderAction_OutputIsSilence;
+  for (int i=0;i<mRenderNotify.GetSize();++i)
+  {
+    AudioUnitRenderActionFlags action=kAudioUnitRenderAction_PostRender;
+    auto* callback=mRenderNotify.Get(i);
+    callback->inputProc(callback->inputProcRefCon,&action,timestamp,outputBus,frames,output);
+  }
+  return noErr;
+}

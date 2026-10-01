@@ -12,6 +12,7 @@
 #include <cstdio>
 
 #include "IPlugCLAP.h"
+#include "IPlugCLAPBusLayout.h"
 #include "IPlugPluginBase.h"
 #include "plugin.hxx"
 #include "host-proxy.hxx"
@@ -26,6 +27,7 @@ void ClapNameCopy(char* destination, const char* source)
   strncpy(destination, source, CLAP_NAME_SIZE);
   destination[CLAP_NAME_SIZE - 1] = 0;
 }
+
 
 IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   : IPlugAPIBase(config, kAPICLAP)
@@ -56,6 +58,80 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
 uint32_t IPlugCLAP::tailGet() const noexcept
 {
   return GetTailIsInfinite() ? std::numeric_limits<uint32_t>::max() : GetTailSize();
+}
+
+const void* IPlugCLAP::extension(const char* id) noexcept
+{
+  if (HasBusLayouts() && BusLayoutsValid())
+  {
+    if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS_CONFIG_INFO))
+    {
+      static const clap_plugin_audio_ports_config_info configInfo = {
+        ClapCurrentConfig, ClapGetConfigPortInfo,
+      };
+      return &configInfo;
+    }
+    if (!std::strcmp(id, CLAP_EXT_AMBISONIC))
+    {
+      static const clap_plugin_ambisonic ambisonic = {
+        ClapAmbisonicIsConfigSupported, ClapAmbisonicGetConfig,
+      };
+      return &ambisonic;
+    }
+  }
+  return ClapPluginHelper::extension(id);
+}
+
+bool IPlugCLAP::GetBusLayoutPortInfo(const BusLayoutConfiguration& configuration,
+                                     uint32_t index, bool isInput,
+                                     clap_audio_port_info* info) const
+{
+  const auto& buses = configuration.buses[isInput ? kInput : kOutput];
+  return index < buses.size() && ClapGetAudioPortInfo(buses[index], info);
+}
+
+clap_id IPlugCLAP::ClapCurrentConfig(const clap_plugin* plugin)
+{
+  const auto& self = ClapPluginHelper::from(plugin);
+  const auto* configuration = static_cast<const IPlugCLAP&>(self).GetActiveBusLayoutConfiguration();
+  return configuration ? configuration->id : CLAP_INVALID_ID;
+}
+
+bool IPlugCLAP::ClapGetConfigPortInfo(const clap_plugin* plugin, clap_id configID,
+                                      uint32_t portIndex, bool isInput,
+                                      clap_audio_port_info* info)
+{
+  const auto& self = ClapPluginHelper::from(plugin);
+  const auto* policy = static_cast<const IPlugCLAP&>(self).GetBusLayoutPolicy();
+  const auto* configuration = policy ? policy->Find(configID) : nullptr;
+  return configuration && ClapConfigurationRepresentable(*configuration) && static_cast<const IPlugCLAP&>(self).GetBusLayoutPortInfo(*configuration, portIndex, isInput, info);
+}
+
+bool IPlugCLAP::ClapAmbisonicIsConfigSupported(const clap_plugin* plugin,
+                                                const clap_ambisonic_config* config)
+{
+  if (!config) return false;
+  const auto& self = ClapPluginHelper::from(plugin);
+  const auto* policy = static_cast<const IPlugCLAP&>(self).GetBusLayoutPolicy();
+  if (!policy) return false;
+  for (const auto& candidate : policy->configurations) if (ClapConfigurationRepresentable(candidate))
+    for (int direction = kInput; direction <= kOutput; ++direction)
+      for (const auto& bus : candidate.buses[direction])
+      {
+        clap_ambisonic_config supported {};
+        if (ClapGetAmbisonicConfig(bus, &supported) &&
+            supported.ordering == config->ordering && supported.normalization == config->normalization)
+          return true;
+      }
+  return false;
+}
+
+bool IPlugCLAP::ClapAmbisonicGetConfig(const clap_plugin* plugin, bool isInput,
+                                       uint32_t portIndex, clap_ambisonic_config* config)
+{
+  const auto& self = ClapPluginHelper::from(plugin);
+  const auto* bus = static_cast<const IPlugCLAP&>(self).GetActiveBusLayout(isInput ? kInput : kOutput, static_cast<int>(portIndex));
+  return bus && ClapGetAmbisonicConfig(*bus, config);
 }
 
 void IPlugCLAP::FlushParamsIfNeeded()
@@ -146,6 +222,13 @@ bool IPlugCLAP::SendSysEx(const ISysEx& msg)
 // clap_plugin
 bool IPlugCLAP::init() noexcept
 {
+  if (HasBusLayouts())
+  {
+    const auto* policy = GetBusLayoutPolicy();
+    const auto* configuration = policy ? policy->Find(policy->defaultID) : nullptr;
+    return configuration && ClapConfigurationRepresentable(*configuration) && CommitBusLayout(*configuration);
+  }
+
   SetDefaultConfig();
   
   return true;
@@ -153,7 +236,15 @@ bool IPlugCLAP::init() noexcept
 
 bool IPlugCLAP::activate(double sampleRate, uint32_t minFrameCount, uint32_t maxFrameCount) noexcept
 {
+  if (HasBusLayouts() && (!GetActiveBusLayoutConfiguration() || !maxFrameCount ||
+      !std::isfinite(sampleRate) || sampleRate<=0 || minFrameCount>maxFrameCount ||
+      static_cast<uint64_t>(maxFrameCount)*std::max(1,RequiredChannels())>INT32_MAX/sizeof(double))) return false;
   SetBlockSize(maxFrameCount);
+  if (HasBusLayouts())
+  {
+    mConstantAudio32.Resize(RequiredChannels() * static_cast<int>(maxFrameCount));
+    mConstantAudio64.Resize(RequiredChannels() * static_cast<int>(maxFrameCount));
+  }
   SetSampleRate(sampleRate);
   OnActivate(true);
   OnParamReset(kReset);
@@ -195,6 +286,37 @@ bool InputIsSilent(const T* data, int nFrames)
 
 clap_process_status IPlugCLAP::process(const clap_process* pProcess) noexcept
 {
+  bool checkedFormat64=false;
+  if (HasBusLayouts())
+  {
+  if (!pProcess || (pProcess->audio_inputs_count && !pProcess->audio_inputs) ||
+      (pProcess->audio_outputs_count && !pProcess->audio_outputs) || pProcess->frames_count > static_cast<uint32_t>(GetBlockSize()))
+    return CLAP_PROCESS_ERROR;
+  bool hasFormat=false;
+  uint64_t checkedInputs=0, checkedOutputs=0;
+  const auto checkBuffers = [&](const clap_audio_buffer* buffers, uint32_t count, uint64_t& channels) {
+    for (uint32_t i=0; i<count; ++i) {
+      const auto& buffer=buffers[i];
+      if (buffer.channel_count && (!buffer.data32 && !buffer.data64)) return false;
+      if (buffer.channel_count && buffer.data32 && buffer.data64) return false;
+      const bool is64=buffer.data64 != nullptr;
+      if (buffer.channel_count && hasFormat && is64 != checkedFormat64) return false;
+      if (buffer.channel_count) { checkedFormat64=is64; hasFormat=true; }
+      channels += buffer.channel_count;
+      if (channels > static_cast<uint64_t>(INT32_MAX)) return false;
+    }
+    return true;
+  };
+  if (!checkBuffers(pProcess->audio_inputs,pProcess->audio_inputs_count,checkedInputs) ||
+      !checkBuffers(pProcess->audio_outputs,pProcess->audio_outputs_count,checkedOutputs)) return CLAP_PROCESS_ERROR;
+
+  {
+    const auto* c=GetActiveBusLayoutConfiguration();
+    if (!BusLayoutsValid() || !c || pProcess->audio_inputs_count!=c->buses[0].size() || pProcess->audio_outputs_count!=c->buses[1].size()) return CLAP_PROCESS_ERROR;
+    for (uint32_t b=0;b<pProcess->audio_inputs_count;++b) if (pProcess->audio_inputs[b].channel_count!=c->buses[0][b].layout.NChannels()) return CLAP_PROCESS_ERROR;
+    for (uint32_t b=0;b<pProcess->audio_outputs_count;++b) if (pProcess->audio_outputs[b].channel_count!=c->buses[1][b].layout.NChannels()) return CLAP_PROCESS_ERROR;
+  }
+  }
   IMidiMsg msg;
   SysExData sysEx;
   
@@ -264,13 +386,14 @@ clap_process_status IPlugCLAP::process(const clap_process* pProcess) noexcept
   for (uint32_t i = 0; i < pProcess->audio_outputs_count; i++)
     nOuts += static_cast<int>(pProcess->audio_outputs[i].channel_count);
   
-  // Check the format
-  bool format64 = false;
-  
-  if (pProcess->audio_inputs_count && pProcess->audio_inputs && pProcess->audio_inputs[0].channel_count)
-    format64 = pProcess->audio_inputs[0].data64;
-  else if (pProcess->audio_outputs_count && pProcess->audio_outputs && pProcess->audio_outputs[0].channel_count)
-    format64 = pProcess->audio_outputs[0].data64;
+  bool format64=checkedFormat64;
+  if (!HasBusLayouts())
+  {
+    if (pProcess->audio_inputs_count && pProcess->audio_inputs && pProcess->audio_inputs[0].channel_count)
+      format64=pProcess->audio_inputs[0].data64;
+    else if (pProcess->audio_outputs_count && pProcess->audio_outputs && pProcess->audio_outputs[0].channel_count)
+      format64=pProcess->audio_outputs[0].data64;
+  }
       
   // Assert that all formats match
 #ifndef NDEBUG
@@ -286,7 +409,78 @@ clap_process_status IPlugCLAP::process(const clap_process* pProcess) noexcept
     assert(!bus.channel_count ||  format64 == static_cast<bool>(bus.data64));
   }
 #endif
-  
+
+  if (HasBusLayouts())
+  {
+    const auto* configuration = GetActiveBusLayoutConfiguration();
+    if (!BusLayoutsValid() || !configuration ||
+        pProcess->audio_inputs_count != configuration->buses[kInput].size() ||
+        pProcess->audio_outputs_count != configuration->buses[kOutput].size() ||
+        !BeginBusLayoutBlock(nFrames))
+      return CLAP_PROCESS_ERROR;
+
+    // Conservative tail handling avoids sleeping on an uninspected live input.
+    if (nIns) insQuiet=false;
+    int constantChannel=0;
+    for (uint32_t i = 0; i < pProcess->audio_inputs_count; ++i)
+    {
+      const auto& buffer = pProcess->audio_inputs[i];
+      if (buffer.channel_count != configuration->buses[kInput][i].layout.NChannels()) return CLAP_PROCESS_ERROR;
+      if (format64)
+      {
+        for (uint32_t channel=0; channel<buffer.channel_count; ++channel)
+        {
+          mAudioIO64.Get()[channel]=buffer.data64[channel];
+          if (channel < 64 && (buffer.constant_mask & (uint64_t(1) << channel)))
+          {
+            double* scratch=mConstantAudio64.Get() + static_cast<size_t>(constantChannel++) * nFrames;
+            std::fill(scratch, scratch+nFrames, nFrames && buffer.data64[channel] ? buffer.data64[channel][0] : 0.);
+            mAudioIO64.Get()[channel]=scratch;
+          }
+        }
+        if (!AttachBusBuffers(kInput, static_cast<int>(i), static_cast<int>(buffer.channel_count), mAudioIO64.Get(), nFrames)) return CLAP_PROCESS_ERROR;
+      }
+      else
+      {
+        for (uint32_t channel=0; channel<buffer.channel_count; ++channel)
+        {
+          mAudioIO32.Get()[channel]=buffer.data32[channel];
+          if (channel < 64 && (buffer.constant_mask & (uint64_t(1) << channel)))
+          {
+            float* scratch=mConstantAudio32.Get() + static_cast<size_t>(constantChannel++) * nFrames;
+            std::fill(scratch, scratch+nFrames, nFrames && buffer.data32[channel] ? buffer.data32[channel][0] : 0.f);
+            mAudioIO32.Get()[channel]=scratch;
+          }
+        }
+        if (!AttachBusBuffers(kInput, static_cast<int>(i), static_cast<int>(buffer.channel_count), mAudioIO32.Get(), nFrames)) return CLAP_PROCESS_ERROR;
+      }
+    }
+    for (uint32_t i = 0; i < pProcess->audio_outputs_count; ++i)
+    {
+      auto& buffer = pProcess->audio_outputs[i];
+      if (buffer.channel_count != configuration->buses[kOutput][i].layout.NChannels())
+        return CLAP_PROCESS_ERROR;
+      const bool attached = format64
+        ? AttachBusBuffers(kOutput, static_cast<int>(i), static_cast<int>(buffer.channel_count), buffer.data64, nFrames)
+        : AttachBusBuffers(kOutput, static_cast<int>(i), static_cast<int>(buffer.channel_count), buffer.data32, nFrames);
+      if (!attached) return CLAP_PROCESS_ERROR;
+    }
+    for (uint32_t i=0;i<pProcess->audio_outputs_count;++i)
+      pProcess->audio_outputs[i].constant_mask=0;
+
+    if (GetBypassed())
+    {
+      if (format64) PassThroughBuffers(0.0,nFrames);
+      else PassThroughBuffers(0.f,nFrames);
+    }
+    else
+    {
+      if (format64) ProcessBuffers(0.0,nFrames);
+      else ProcessBuffers(0.f,nFrames);
+    }
+  }
+  else
+  {
   SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), false);
   SetChannelConnections(ERoute::kInput, 0, nIns, true);
 
@@ -366,6 +560,7 @@ clap_process_status IPlugCLAP::process(const clap_process* pProcess) noexcept
     ProcessBuffers(0.0, nFrames);
   else
     ProcessBuffers(0.f, nFrames);
+  }
     
   // Send Events Out (Parameters and MIDI)
   ProcessOutputEvents(pProcess->out_events, nFrames);
@@ -724,16 +919,26 @@ const char* ClapPortType(uint32_t nChans)
 
 bool IPlugCLAP::implementsAudioPorts() const noexcept
 {
+  if (HasBusLayouts())
+    return BusLayoutsValid() && GetActiveBusLayoutConfiguration();
   return MaxNBuses(ERoute::kInput) || MaxNBuses(ERoute::kOutput);
 }
 
 uint32_t IPlugCLAP::audioPortsCount(bool isInput) const noexcept
 {
+  if (const auto* configuration = GetActiveBusLayoutConfiguration())
+    return static_cast<uint32_t>(configuration->buses[isInput ? kInput : kOutput].size());
   return NBuses(isInput ? ERoute::kInput : ERoute::kOutput);
 }
 
 bool IPlugCLAP::audioPortsInfo(uint32_t index, bool isInput, clap_audio_port_info* pInfo) const noexcept
 {
+  if (const auto* configuration = GetActiveBusLayoutConfiguration())
+    return GetBusLayoutPortInfo(*configuration, index, isInput, pInfo);
+
+  if (index >= audioPortsCount(isInput) || !pInfo)
+    return false;
+
   // TODO - should we use in place pairs?
   WDL_String busName;
 
@@ -758,11 +963,19 @@ bool IPlugCLAP::audioPortsInfo(uint32_t index, bool isInput, clap_audio_port_inf
 
 bool IPlugCLAP::implementsAudioPortsConfig() const noexcept
 {
+  if (HasBusLayouts())
+    return BusLayoutsValid();
   return audioPortsConfigCount();
 }
 
 uint32_t IPlugCLAP::audioPortsConfigCount() const noexcept
 {
+  if (const auto* policy = GetBusLayoutPolicy())
+  {
+    uint32_t count=0;
+    if (BusLayoutsValid()) for (const auto& c:policy->configurations) if (ClapConfigurationRepresentable(c)) ++count;
+    return count;
+  }
   return static_cast<uint32_t>(NIOConfigs());
 }
 
@@ -770,6 +983,13 @@ bool IPlugCLAP::audioPortsGetConfig(uint32_t index, clap_audio_ports_config* pCo
 {
   if (index >= audioPortsConfigCount())
     return false;
+
+  if (const auto* policy = GetBusLayoutPolicy())
+  {
+    for (const auto& c:policy->configurations) if (ClapConfigurationRepresentable(c))
+    { if (!index--) return ClapGetAudioPortsConfig(c,pConfig); }
+    return false;
+  }
   
   WDL_String configName;
 
@@ -811,12 +1031,93 @@ bool IPlugCLAP::audioPortsGetConfig(uint32_t index, clap_audio_ports_config* pCo
 
 bool IPlugCLAP::audioPortsSetConfig(clap_id configIdx) noexcept
 {
-  if (configIdx >= audioPortsConfigCount())
-    return false;
+  if (const auto* policy = GetBusLayoutPolicy())
+  {
+    const auto* configuration=policy->Find(configIdx);
+    return !isActive() && configuration && ClapConfigurationRepresentable(*configuration) && CommitBusLayout(*configuration);
+  }
+  if (configIdx >= audioPortsConfigCount()) return false;
   
   mConfigIdx = static_cast<int>(configIdx);
   
   return true;
+}
+
+bool IPlugCLAP::BuildBusLayoutCandidate(const clap_audio_port_configuration_request* requests,
+                                        uint32_t requestCount,
+                                        BusLayoutConfiguration& candidate) const
+{
+  const auto* active = GetActiveBusLayoutConfiguration();
+  if (!active || (requestCount && !requests)) return false;
+  if (requestCount > active->buses[kInput].size() + active->buses[kOutput].size()) return false;
+  candidate = *active;
+  for (uint32_t i = 0; i < requestCount; ++i)
+  {
+    const auto& request = requests[i];
+    const auto direction=request.is_input ? kInput : kOutput;
+    auto& buses = candidate.buses[direction];
+    for (uint32_t prior=0; prior<i; ++prior)
+      if (requests[prior].is_input == request.is_input && requests[prior].port_index == request.port_index) return false;
+    if (request.port_index >= buses.size() || request.channel_count > static_cast<uint32_t>(GetBusBufferCapacity(direction, static_cast<int>(request.port_index))) ||
+        !ClapSetLayoutFromRequest(buses[request.port_index].layout, request))
+      return false;
+  }
+  return ClapConfigurationRepresentable(candidate);
+}
+
+bool IPlugCLAP::implementsConfigurableAudioPorts() const noexcept
+{
+  return HasBusLayouts() && BusLayoutsValid() && GetActiveBusLayoutConfiguration();
+}
+
+bool IPlugCLAP::configurableAudioPortsCanApplyConfiguration(const clap_audio_port_configuration_request* requests,
+                                                             uint32_t requestCount) const noexcept
+{
+  BusLayoutConfiguration candidate;
+  return !isActive() && BuildBusLayoutCandidate(requests, requestCount, candidate) && CanApplyBusLayout(candidate);
+}
+
+bool IPlugCLAP::configurableAudioPortsApplyConfiguration(const clap_audio_port_configuration_request* requests,
+                                                          uint32_t requestCount) noexcept
+{
+  BusLayoutConfiguration candidate;
+  return !isActive() && BuildBusLayoutCandidate(requests, requestCount, candidate) && CommitBusLayout(std::move(candidate));
+}
+
+bool IPlugCLAP::implementsSurround() const noexcept
+{
+  const auto* policy=GetBusLayoutPolicy();
+  if (!policy) return false;
+  for (const auto& configuration:policy->configurations) if (ClapConfigurationRepresentable(configuration))
+    for (const auto& buses:configuration.buses) for (const auto& bus:buses)
+      if (bus.layout.kind==LayoutKind::Speakers && ClapBusLayoutPortType(bus.layout) && !std::strcmp(ClapBusLayoutPortType(bus.layout),CLAP_PORT_SURROUND)) return true;
+  return false;
+}
+
+bool IPlugCLAP::isChannelMaskSupported(uint64_t channelMask) const noexcept
+{
+  const auto* policy = GetBusLayoutPolicy();
+  if (!policy) return false;
+  for (const auto& configuration : policy->configurations) if (ClapConfigurationRepresentable(configuration))
+    for (int direction = kInput; direction <= kOutput; ++direction)
+      for (const auto& bus : configuration.buses[direction])
+      {
+        uint64_t supportedMask = 0;
+        uint32_t count = 0;
+        uint8_t map[64] {};
+        if (!ClapGetSurroundMap(bus, map, 64, count)) continue;
+        for (uint32_t i = 0; i < count; ++i) supportedMask |= uint64_t(1) << map[i];
+        if (supportedMask == channelMask) return true;
+      }
+  return false;
+}
+
+uint32_t IPlugCLAP::getChannelMap(bool isInput, uint32_t portIndex,
+                                  uint8_t* channelMap, uint32_t channelMapCapacity) const noexcept
+{
+  const auto* bus = GetActiveBusLayout(isInput ? kInput : kOutput, static_cast<int>(portIndex));
+  uint32_t count = 0;
+  return bus && ClapGetSurroundMap(*bus, channelMap, channelMapCapacity, count) ? count : 0;
 }
 
 uint32_t IPlugCLAP::notePortsCount(bool isInput) const noexcept

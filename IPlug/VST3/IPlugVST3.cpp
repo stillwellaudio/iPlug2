@@ -50,7 +50,7 @@ tresult PLUGIN_API IPlugVST3::initialize(FUnknown* context)
 
   if (SingleComponentEffect::initialize(context) == kResultOk)
   {
-    IPlugVST3ProcessorBase::Initialize(this);
+    if (!IPlugVST3ProcessorBase::Initialize(this)) return kResultFalse;
     IPlugVST3ControllerBase::Initialize(this, IsInstrument(), DoesMIDIIn());
 
     IPlugVST3GetHost(this, context);
@@ -77,12 +77,24 @@ tresult PLUGIN_API IPlugVST3::setBusArrangements(SpeakerArrangement* pInputBusAr
   return IPlugVST3ProcessorBase::SetBusArrangements(this, pInputBusArrangements, numInBuses, pOutputBusArrangements, numOutBuses) ? kResultTrue : kResultFalse;
 }
 
+tresult PLUGIN_API IPlugVST3::activateBus(MediaType type, BusDirection dir, int32 index, TBool state)
+{
+  if (HasBusLayouts() && type==kAudio && (IsLayoutActivated() || (dir!=kInput && dir!=kOutput))) return kResultFalse;
+  const auto result=SingleComponentEffect::activateBus(type,dir,index,state);
+  if (HasBusLayouts() && type==kAudio && result==kResultOk)
+    SetBusLayoutActive(static_cast<ERoute>(dir),index,state);
+  return result;
+}
+
 tresult PLUGIN_API IPlugVST3::setActive(TBool state)
 {
   TRACE
 
-  OnActivate((bool) state);
-  return SingleComponentEffect::setActive(state);
+  if (!HasBusLayouts()) { OnActivate((bool) state); return SingleComponentEffect::setActive(state); }
+  if (HasBusLayouts() && state && !GetActiveBusLayoutConfiguration()) return kResultFalse;
+  const auto result=SingleComponentEffect::setActive(state);
+  if (result==kResultOk) { SetLayoutActivated(state); OnActivate((bool) state); }
+  return result;
 }
 
 tresult PLUGIN_API IPlugVST3::setupProcessing(ProcessSetup& newSetup)
@@ -103,6 +115,7 @@ tresult PLUGIN_API IPlugVST3::process(ProcessData& data)
 {
   TRACE
 
+  if (HasBusLayouts() && !ValidBusLayoutProcess(data,processSetup)) return kInvalidArgument;
   Process(data, processSetup, audioInputs, audioOutputs, mMidiMsgsFromEditor, mMidiMsgsFromProcessor, mSysExDataFromEditor, mSysexBuf);
   return kResultOk;
 }

@@ -9,6 +9,7 @@
 */
 
 #include "IPlugAAX.h"
+#include "IPlugAAXBusLayout.h"
 #include "IPlugAAX_view_interface.h"
 #include "AAX_CBinaryTaperDelegate.h"
 #include "AAX_CBinaryDisplayDelegate.h"
@@ -113,8 +114,13 @@ IPlugAAX::IPlugAAX(const InstanceInfo& info, const Config& config)
 {
   Trace(TRACELOC, "%s%s", config.pluginName, config.channelIOStr);
 
-  SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), true);
-  SetChannelConnections(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), true);
+  if (!HasBusLayouts())
+  {
+    SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), true);
+    SetChannelConnections(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), true);
+  }
+  else
+    mBusLayoutOutputPointers.resize(static_cast<size_t>(MaxNChannels(ERoute::kOutput)), nullptr);
   
   SetBlockSize(DEFAULT_BLOCK_SIZE);
   InitLatencyDelay();
@@ -225,6 +231,21 @@ AAX_Result IPlugAAX::EffectInit()
   AAX_CSampleRate sr;
   Controller()->GetSampleRate(&sr);
   SetSampleRate(sr);
+
+  if (HasBusLayouts())
+  {
+    AAX_EStemFormat inputStem=AAX_eStemFormat_None, outputStem=AAX_eStemFormat_None;
+    if (!BusLayoutsValid() || Controller()->GetInputStemFormat(&inputStem) != AAX_SUCCESS ||
+        Controller()->GetOutputStemFormat(&outputStem) != AAX_SUCCESS)
+      return AAX_ERROR_INVALID_ARGUMENT;
+    const auto* configuration=aaxlayouts::FindConfiguration(*GetBusLayoutPolicy(), inputStem, outputStem);
+    // AAX exposes only main stems at runtime. Ambiguous pairs fail closed.
+    if (!configuration) return AAX_ERROR_INVALID_ARGUMENT;
+    auto candidate=*configuration;
+    for (auto& buses:candidate.buses) for (auto& bus:buses)
+    { AAX_EStemFormat stem; if (!aaxlayouts::ToStem(bus.layout,stem) || !aaxlayouts::FromStem(stem,bus.layout)) return AAX_ERROR_INVALID_ARGUMENT; }
+    if (!CommitBusLayout(std::move(candidate))) return AAX_ERROR_INVALID_ARGUMENT;
+  }
   OnReset();
   
   return AAX_SUCCESS;
@@ -268,6 +289,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   TRACE
   (void) inSynchronizedParamValues;
   (void) inNumSynchronizedParamValues;
+  if (!pRenderInfo || !pRenderInfo->mNumSamples) return;
 
   // Get bypass parameter value
   bool bypass;
@@ -301,11 +323,63 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
 
   if (numSamples > GetBlockSize())
   {
+    if (HasBusLayouts())
+    {
+      if (pRenderInfo->mAudioOutputs && GetActiveBusLayoutConfiguration())
+      {
+        int channels=0;
+        for (const auto& bus : GetActiveBusLayoutConfiguration()->buses[kOutput]) channels += static_cast<int>(bus.layout.NChannels());
+        for (int channel=0; channel<channels; ++channel)
+          if (pRenderInfo->mAudioOutputs[channel]) memset(pRenderInfo->mAudioOutputs[channel], 0, static_cast<size_t>(numSamples) * sizeof(float));
+      }
+      return; // Never allocate on the AAX render thread.
+    }
     SetBlockSize(numSamples);
     ResizeBypassFadeBuffers(numSamples);
     OnReset();
   }
 
+  int maxNOutChans = MaxNChannels(ERoute::kOutput);
+
+  if (HasBusLayouts())
+  {
+    const auto* active=GetActiveBusLayoutConfiguration();
+    const int mainInputCount=(active && !active->buses[kInput].empty()) ? static_cast<int>(active->buses[kInput][0].layout.NChannels()) : 0;
+    const int mainOutputCount=(active && !active->buses[kOutput].empty()) ? static_cast<int>(active->buses[kOutput][0].layout.NChannels()) : 0;
+    if (!active || numInChannels != (mainInputCount ? mainInputCount : mainOutputCount) || numOutChannels != mainOutputCount ||
+        (!active->buses[kInput].empty() && !pRenderInfo->mAudioInputs) || !pRenderInfo->mAudioOutputs || !BeginBusLayoutBlock(numSamples)) return;
+    int mainInputOffset=0;
+    for (size_t bus=0; bus<GetActiveBusLayoutConfiguration()->buses[kInput].size(); ++bus)
+    {
+      const auto* layout=GetActiveBusLayout(kInput, static_cast<int>(bus));
+      const int count=layout ? static_cast<int>(layout->layout.NChannels()) : 0;
+      float** buffers=nullptr;
+      if (layout && layout->role == BusRole::Sidechain)
+      {
+        const int sideChain=(pRenderInfo->mSideChainP ? *pRenderInfo->mSideChainP : 0);
+        if (sideChain > 0)
+        {
+          if (sideChain != mainInputCount) return;
+          buffers=pRenderInfo->mAudioInputs + sideChain;
+        }
+      }
+      else { buffers=pRenderInfo->mAudioInputs + mainInputOffset; mainInputOffset += count; }
+      if (!AttachBusBuffers(kInput, static_cast<int>(bus), count, buffers, numSamples)) return;
+    }
+    int hostOutputOffset=0;
+    for (size_t bus=0; bus<GetActiveBusLayoutConfiguration()->buses[kOutput].size(); ++bus)
+    {
+      const auto* layout=GetActiveBusLayout(kOutput, static_cast<int>(bus));
+      const int count=layout ? static_cast<int>(layout->layout.NChannels()) : 0;
+      float** buffers=pRenderInfo->mAudioOutputs + hostOutputOffset;
+      const int reserved=GetBusBufferOffset(kOutput, static_cast<int>(bus));
+      for (int channel=0; channel<count; ++channel) mBusLayoutOutputPointers[static_cast<size_t>(reserved+channel)]=buffers[channel];
+      hostOutputOffset += count;
+      if (!AttachBusBuffers(kOutput, static_cast<int>(bus), count, buffers, numSamples)) return;
+    }
+  }
+  else
+  {
   if (!IsInstrument())
   {
     SetChannelConnections(ERoute::kInput, 0, numInChannels, true);
@@ -326,8 +400,6 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
   }
     
-  int maxNOutChans = MaxNChannels(ERoute::kOutput);
-  
   SetChannelConnections(ERoute::kOutput, 0, maxNOutChans, true);
   
   if (MaxNBuses(kOutput) == 1) // single output bus, only connect available channels
@@ -338,6 +410,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   else // multi output buses, connect all buffers including AOS
   {
     AttachBuffers(ERoute::kOutput, 0, maxNOutChans, pRenderInfo->mAudioOutputs, numSamples);
+  }
   }
 
   const bool handlesHostBypassInternally = HandlesHostBypassInternally();
@@ -472,7 +545,8 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
       if (!IsChannelConnected(ERoute::kOutput, ch))
         continue;
 
-      float* dest = pRenderInfo->mAudioOutputs[ch];
+      float* dest = HasBusLayouts() ? mBusLayoutOutputPointers[static_cast<size_t>(ch)] : pRenderInfo->mAudioOutputs[ch];
+      if (!dest) continue;
       sample* wet = mBypassFadeWetBuffers[static_cast<size_t>(ch)].Get();
       sample* dry = mBypassFadeDryBuffers[static_cast<size_t>(ch)].Get();
 
@@ -838,6 +912,13 @@ void IPlugAAX::ResizeBypassFadeBuffers(int blockSize)
 
 double IPlugAAX::GetInputBufferMaxValue (AAX_SIPlugRenderInfo* pRenderInfo, int nFrames)
 {
+    if (HasBusLayouts())
+    {
+      double peak=0.;
+      for (int c=0;c<MaxNChannels(kInput);++c) if (IsChannelConnected(kInput,c))
+        for (int f=0;f<nFrames;++f) peak=std::fmax(peak,std::fabs(GetScratchData(kInput)[c][f]));
+      return peak;
+    }
     int i, n = NChannelsConnected(ERoute::kInput);
     
     double mMax = 0.0;
@@ -857,6 +938,13 @@ double IPlugAAX::GetInputBufferMaxValue (AAX_SIPlugRenderInfo* pRenderInfo, int 
 
 double IPlugAAX::GetOutputBufferMaxValue (AAX_SIPlugRenderInfo* pRenderInfo, int nFrames)
 {
+    if (HasBusLayouts())
+    {
+      double peak=0.;
+      for (int c=0;c<MaxNChannels(kOutput);++c) if (IsChannelConnected(kOutput,c))
+        for (int f=0;f<nFrames;++f) peak=std::fmax(peak,std::fabs(mBusLayoutOutputPointers[c][f]));
+      return peak;
+    }
     int i, n = NChannelsConnected(ERoute::kOutput);
 
     double mMax = 0.0;

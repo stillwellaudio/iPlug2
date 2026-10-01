@@ -24,6 +24,38 @@ static int VSTSpkrArrType(int nchan)
   return kSpeakerArrUserDefined;
 }
 
+static bool VST2Speaker(SpeakerPosition p, VstInt32& result)
+{
+  switch (p) { case SpeakerPosition::Mono: result=kSpeakerM; return true; case SpeakerPosition::L: result=kSpeakerL; return true; case SpeakerPosition::R: result=kSpeakerR; return true; case SpeakerPosition::C: result=kSpeakerC; return true; case SpeakerPosition::LFE: result=kSpeakerLfe; return true; case SpeakerPosition::Ls: result=kSpeakerLs; return true; case SpeakerPosition::Rs: result=kSpeakerRs; return true; case SpeakerPosition::Lc: result=kSpeakerLc; return true; case SpeakerPosition::Rc: result=kSpeakerRc; return true; case SpeakerPosition::Cs: result=kSpeakerCs; return true; case SpeakerPosition::Sl: result=kSpeakerSl; return true; case SpeakerPosition::Sr: result=kSpeakerSr; return true; case SpeakerPosition::Tfl: result=kSpeakerTfl; return true; case SpeakerPosition::Tfc: result=kSpeakerTfc; return true; case SpeakerPosition::Tfr: result=kSpeakerTfr; return true; case SpeakerPosition::Trl: result=kSpeakerTrl; return true; case SpeakerPosition::Trc: result=kSpeakerTrc; return true; case SpeakerPosition::Trr: result=kSpeakerTrr; return true; default: return false; }
+}
+static bool VST2Arrangement(const BusLayout& layout, VstSpeakerArrangement& arrangement)
+{
+  if (layout.NChannels()>8 || layout.kind==LayoutKind::Ambisonic || layout.kind==LayoutKind::NativeUnknown || layout.kind==LayoutKind::Unspecified) return false;
+  memset(&arrangement,0,sizeof(arrangement)); arrangement.numChannels=static_cast<VstInt32>(layout.NChannels()); arrangement.type=kSpeakerArrUserDefined;
+  for (size_t i=0;i<layout.channels.size();++i)
+  {
+    const auto& ch=layout.channels[i];
+    if (ch.nativeAPI!=LayoutAPI::None || ch.native || ch.coordinateFlags ||
+        ch.coordinates[0]!=0.f || ch.coordinates[1]!=0.f || ch.coordinates[2]!=0.f ||
+        ch.component!=(layout.kind==LayoutKind::Discrete ? i : 0)) return false;
+  }
+  if (layout.kind==LayoutKind::Discrete) { for (int i=0;i<arrangement.numChannels;++i) arrangement.speakers[i].type=kSpeakerUndefined; return true; }
+  if (layout.kind!=LayoutKind::Speakers) return false;
+  for (int i=0;i<arrangement.numChannels;++i) if (!VST2Speaker(layout.channels[i].speaker,arrangement.speakers[i].type)) return false;
+  return true;
+}
+
+static bool VST2FromArrangement(const VstSpeakerArrangement& arrangement, BusLayout& layout)
+{
+  if (arrangement.numChannels<0 || arrangement.numChannels>8) return false;
+  bool allUndefined=true;
+  for (int i=0;i<arrangement.numChannels;++i) if (arrangement.speakers[i].type!=kSpeakerUndefined) allUndefined=false;
+  if (allUndefined && arrangement.type==kSpeakerArrUserDefined) { layout=BusLayout::Discrete(static_cast<uint32_t>(arrangement.numChannels)); return true; }
+  layout=BusLayout(); layout.kind=LayoutKind::Speakers; layout.channels.resize(static_cast<size_t>(arrangement.numChannels));
+  for (int i=0;i<arrangement.numChannels;++i) { SpeakerPosition p=SpeakerPosition::Unknown; switch(arrangement.speakers[i].type) { case kSpeakerM:p=SpeakerPosition::Mono;break; case kSpeakerL:p=SpeakerPosition::L;break; case kSpeakerR:p=SpeakerPosition::R;break; case kSpeakerC:p=SpeakerPosition::C;break; case kSpeakerLfe:p=SpeakerPosition::LFE;break; case kSpeakerLs:p=SpeakerPosition::Ls;break; case kSpeakerRs:p=SpeakerPosition::Rs;break; case kSpeakerLc:p=SpeakerPosition::Lc;break; case kSpeakerRc:p=SpeakerPosition::Rc;break; case kSpeakerCs:p=SpeakerPosition::Cs;break; case kSpeakerSl:p=SpeakerPosition::Sl;break; case kSpeakerSr:p=SpeakerPosition::Sr;break; case kSpeakerTfl:p=SpeakerPosition::Tfl;break; case kSpeakerTfc:p=SpeakerPosition::Tfc;break; case kSpeakerTfr:p=SpeakerPosition::Tfr;break; case kSpeakerTrl:p=SpeakerPosition::Trl;break; case kSpeakerTrc:p=SpeakerPosition::Trc;break; case kSpeakerTrr:p=SpeakerPosition::Trr;break; default:return false; } layout.channels[i].speaker=p; }
+  return true;
+}
+
 static int AsciiToVK(int ascii)
 {
 #ifdef OS_WIN
@@ -129,6 +161,16 @@ IPlugVST2::IPlugVST2(const InstanceInfo& info, const Config& config)
   mHasVSTExtensions = VSTEXT_NONE;
 
   int nInputs = MaxNChannels(ERoute::kInput), nOutputs = MaxNChannels(ERoute::kOutput);
+  if (HasBusLayouts())
+  {
+    nInputs=nOutputs=0;
+    const auto* c=BusLayoutsValid() ? GetBusLayoutPolicy()->Find(GetBusLayoutPolicy()->defaultID) : nullptr;
+    VstSpeakerArrangement in{},out{};
+    if (c && c->buses[0].size()<=1 && c->buses[1].size()<=1 &&
+        (c->buses[0].empty() || VST2Arrangement(c->buses[0][0].layout,in)) &&
+        (c->buses[1].empty() || VST2Arrangement(c->buses[1][0].layout,out)))
+    {nInputs=in.numChannels;nOutputs=out.numChannels;}
+  }
 
   memset(&mAEffect, 0, sizeof(AEffect));
   mAEffect.object = this;
@@ -162,8 +204,11 @@ IPlugVST2::IPlugVST2(const InstanceInfo& info, const Config& config)
   mOutputSpkrArr.type = VSTSpkrArrType(nOutputs);
 
   // Default everything to connected, then disconnect pins if the host says to.
-  SetChannelConnections(ERoute::kInput, 0, nInputs, true);
-  SetChannelConnections(ERoute::kOutput, 0, nOutputs, true);
+  if (!HasBusLayouts())
+  {
+    SetChannelConnections(ERoute::kInput, 0, nInputs, true);
+    SetChannelConnections(ERoute::kOutput, 0, nOutputs, true);
+  }
 
   SetBlockSize(DEFAULT_BLOCK_SIZE);
 
@@ -333,6 +378,15 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
         
         _this->SetHost(productStr, version);
       }
+      if (_this->HasBusLayouts())
+      {
+        const auto* policy=_this->GetBusLayoutPolicy(); const auto* layout=policy ? policy->Find(policy->defaultID) : nullptr;
+        VstSpeakerArrangement in {}, out {};
+        if (!layout || layout->buses[kInput].size()>1 || layout->buses[kOutput].size()>1 ||
+            (layout->buses[kInput].size() && !VST2Arrangement(layout->buses[kInput][0].layout,in)) ||
+            (layout->buses[kOutput].size() && !VST2Arrangement(layout->buses[kOutput][0].layout,out)) || ! _this->CommitBusLayout(*layout)) return 0;
+        _this->mInputSpkrArr=in; _this->mOutputSpkrArr=out; _this->mAEffect.numInputs=in.numChannels; _this->mAEffect.numOutputs=out.numChannels;
+      }
       _this->OnParamReset(kReset);
       return 0;
     }
@@ -438,6 +492,11 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
     }
     case effMainsChanged:
     {
+      if (_this->HasBusLayouts())
+      {
+        if (value && !_this->GetActiveBusLayoutConfiguration()) return 0;
+        _this->mBusLayoutActivated=value!=0;
+      }
       if (!value)
       {
         _this->OnActivate(false);
@@ -640,6 +699,19 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
       VstSpeakerArrangement* pInputArr = (VstSpeakerArrangement*) value;
       VstSpeakerArrangement* pOutputArr = (VstSpeakerArrangement*) ptr;
 
+      if (_this->HasBusLayouts())
+      {
+        const auto* active=_this->GetActiveBusLayoutConfiguration();
+        if (_this->mBusLayoutActivated || !active || active->buses[kInput].size()>1 || active->buses[kOutput].size()>1 ||
+            (pInputArr && (active->buses[kInput].empty() || pInputArr->numChannels != _this->mAEffect.numInputs)) ||
+            (pOutputArr && (active->buses[kOutput].empty() || pOutputArr->numChannels != _this->mAEffect.numOutputs))) return 0;
+        auto candidate=*active; VstSpeakerArrangement inputCandidate=_this->mInputSpkrArr, outputCandidate=_this->mOutputSpkrArr;
+        if (pInputArr && (!VST2FromArrangement(*pInputArr,candidate.buses[kInput][0].layout) || !VST2Arrangement(candidate.buses[kInput][0].layout,inputCandidate))) return 0;
+        if (pOutputArr && (!VST2FromArrangement(*pOutputArr,candidate.buses[kOutput][0].layout) || !VST2Arrangement(candidate.buses[kOutput][0].layout,outputCandidate))) return 0;
+        if (!_this->CanApplyBusLayout(candidate) || !_this->CommitBusLayout(candidate)) return 0;
+        _this->mInputSpkrArr=inputCandidate; _this->mOutputSpkrArr=outputCandidate;
+        return 1;
+      }
       if (pInputArr)
       {
         int n = pInputArr->numChannels;
@@ -934,13 +1006,23 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
 }
 
 template <class SAMPLETYPE>
-void IPlugVST2::VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt32 nFrames)
+bool IPlugVST2::VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt32 nFrames)
 {
   if (DoesMIDIIn())
     mHostCallback(&mAEffect, __audioMasterWantMidiDeprecated, 0, 0, 0, 0.0f);
 
-  AttachBuffers(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), inputs, nFrames);
-  AttachBuffers(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), outputs, nFrames);
+  if (HasBusLayouts())
+  {
+    const auto* layout=GetActiveBusLayoutConfiguration();
+    if (!layout || !BeginBusLayoutBlock(nFrames)) return false;
+    if (!layout->buses[kInput].empty() && !AttachBusBuffers(ERoute::kInput,0,GetActiveBusChannelCount(ERoute::kInput,0),inputs,nFrames)) return false;
+    if (!layout->buses[kOutput].empty() && !AttachBusBuffers(ERoute::kOutput,0,GetActiveBusChannelCount(ERoute::kOutput,0),outputs,nFrames)) return false;
+  }
+  else
+  {
+    AttachBuffers(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), inputs, nFrames);
+    AttachBuffers(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), outputs, nFrames);
+  }
 
   VstTimeInfo* pTI = (VstTimeInfo*) mHostCallback(&mAEffect, audioMasterGetTime, 0, kVstPpqPosValid | kVstTempoValid | kVstBarsValid | kVstCyclePosValid | kVstTimeSigValid, 0, 0);
 
@@ -978,6 +1060,7 @@ void IPlugVST2::VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt3
   {
     ProcessMidiMsg(msg);
   }
+  return true;
 }
 
 // Deprecated.
@@ -985,7 +1068,7 @@ void VSTCALLBACK IPlugVST2::VSTProcess(AEffect* pEffect, float** inputs, float**
 {
   TRACE
   IPlugVST2* _this = (IPlugVST2*) pEffect->object;
-  _this->VSTPreProcess(inputs, outputs, nFrames);
+  if (!_this->VSTPreProcess(inputs, outputs, nFrames)) return;
   ENTER_PARAMS_MUTEX_STATIC
   _this->ProcessBuffersAccumulating(nFrames);
   LEAVE_PARAMS_MUTEX_STATIC
@@ -996,7 +1079,7 @@ void VSTCALLBACK IPlugVST2::VSTProcessReplacing(AEffect* pEffect, float** inputs
 {
   TRACE
   IPlugVST2* _this = (IPlugVST2*) pEffect->object;
-  _this->VSTPreProcess(inputs, outputs, nFrames);
+  if (!_this->VSTPreProcess(inputs, outputs, nFrames)) return;
   ENTER_PARAMS_MUTEX_STATIC
   _this->ProcessBuffers((float) 0.0f, nFrames);
   LEAVE_PARAMS_MUTEX_STATIC
@@ -1007,7 +1090,7 @@ void VSTCALLBACK IPlugVST2::VSTProcessDoubleReplacing(AEffect* pEffect, double**
 {
   TRACE
   IPlugVST2* _this = (IPlugVST2*) pEffect->object;
-  _this->VSTPreProcess(inputs, outputs, nFrames);
+  if (!_this->VSTPreProcess(inputs, outputs, nFrames)) return;
   ENTER_PARAMS_MUTEX_STATIC
   _this->ProcessBuffers((double) 0.0, nFrames);
   LEAVE_PARAMS_MUTEX_STATIC
