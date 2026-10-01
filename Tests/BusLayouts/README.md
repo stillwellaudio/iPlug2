@@ -8,10 +8,10 @@ These are focused framework and adapter tests for the opt-in `PLUG_BUS_LAYOUTS()
 - `CLAPMapping.cpp` and `CLAPAdapter.cpp`: surround and ambisonic mappings, stable and unlisted configuration IDs, finite topology selection, malformed requests, float/double process buffers, constants, silence, and zero frames.
 - `VST3.cpp`: semantic arrangement mapping and fixed topology processing.
 - `AU.cpp`: AUv2 layout properties, tags, configuration lifecycle, factory ABI, and selected render paths.
-- `AAXMapping.cpp`, `AAXRegistration.cpp`, and `AAXAdapter.cpp`: installed-SDK stem mapping, registration validation, and Native/AudioSuite compile/link paths.
+- `AAXMapping.cpp`, `AAXRegistration.cpp`, and `AAXAdapter.cpp`: installed-SDK stem mapping, registration validation, and Native/AudioSuite SDK controller lifecycle and static render callbacks. `AAXTestHost.h` supplies test-owned versioned controller, transport and automation interfaces.
 - `VST2.cpp` and `Legacy.cpp`: fixed flat arrangement behavior and default-off compatibility, including legacy VST3 custom bus hooks.
 
-The suite does not establish commercial-host loading, scanner acceptance, signing, installation, realtime scheduling, or listening behavior. In particular, AAX has no real-host controller/render execution evidence. Broad legacy qualification is incomplete beyond the listed fixtures and Bitter coverage.
+The suite does not establish commercial-host loading, scanner acceptance, signing, installation, realtime scheduling, or listening behavior. Real-host AAX AudioSuite rendering evidence is recorded separately in the qualification project; Native host routing remains unverified. Broad legacy qualification is incomplete beyond the listed fixtures and Bitter coverage.
 
 ## Configure and run
 
@@ -42,6 +42,6 @@ Set `-DBUS_LAYOUT_HOST_PROBES=ON` to build the five standalone probe bundles. Th
 
 Treat a passing test as evidence for only its named fixture and executable path. Current host, validator, and sanitizer reruns may be in progress; record their command, environment, and result with the qualification work rather than promoting pending counts into this README.
 
-Named mapping tables `VST3Named.inc` and `AUNamed.inc` cover every implemented named constant from the installed headers. AAX mapping tests cover all 27 speaker stems and HOA orders 1-7. CLAP tests call the actual extension vtables for named speaker and ambisonic metadata, including undersized maps and unlisted configurations. AAX adapter targets compile/link real Native and AudioSuite code but do not invoke a mocked controller/render path; they must not be counted as channel-routing proof.
+Named mapping tables `VST3Named.inc` and `AUNamed.inc` cover every implemented named constant from the installed headers. AAX mapping tests cover all 27 speaker stems and HOA orders 1-7. CLAP tests call the actual extension vtables for named speaker and ambisonic metadata, including undersized maps and unlisted configurations. AAX adapter targets invoke the SDK Initialize/Uninitialize lifecycle, ResetFieldData and StaticRenderAudio using a versioned test controller. They exercise all 27 speaker stems and HOA orders 1-7, mono sidechain, two auxiliary outputs, reserved-capacity holes, null channels, bypass/fades/latency, parameter changes, instruments, multiple instances, rejected controller/layout transactions, zero frames, and prepared-block bounds. The transparent HOA-7 regression covers Native block sizes through the SDK maximum of 1024 samples; a default-off stereo fixture checks the legacy path. This is synthetic controller/render evidence, separate from DAW qualification.
 
 VST3/CLAP/AU direct fixtures use distinct nonzero data on every channel, at least three input buses where supported, reserved-capacity holes, precision conversion, null/silent cases, rejected transactions, no-op renegotiation, and grow/shrink/reselect cycles. AU additionally renders multiple output elements in reverse order and verifies cache invalidation at the live/offline boundary. Transparent exactly representable samples compare exactly; this does not promise universal float/double conversion identity.

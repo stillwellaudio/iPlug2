@@ -122,7 +122,9 @@ IPlugAAX::IPlugAAX(const InstanceInfo& info, const Config& config)
   else
     mBusLayoutOutputPointers.resize(static_cast<size_t>(MaxNChannels(ERoute::kOutput)), nullptr);
   
-  SetBlockSize(DEFAULT_BLOCK_SIZE);
+  // IPlugMidi.h's DEFAULT_BLOCK_SIZE macro is only 512. Opt-in instances must
+  // prepare the SDK's full ProcessProc range off-thread, including AudioSuite.
+  SetBlockSize(HasBusLayouts() ? (1 << AAX_eAudioBufferLengthNative_Max) : DEFAULT_BLOCK_SIZE);
   InitLatencyDelay();
   ResizeBypassFadeBuffers(GetBlockSize());
 
