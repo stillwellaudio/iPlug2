@@ -7,7 +7,6 @@
 #define PLUG_LATENCY 0
 #define PLUG_VERSION_HEX 0x00010000
 #define PLUG_DOES_STATE_CHUNKS 0
-#define PLUG_UNIQUE_ID 'tAax'
 #define PLUG_MFR_ID 'tMfr'
 #define PLUG_BUS_LAYOUTS() AAXProbeLayouts()
 #define AAX_PROBE_AUDIOSUITE_ID 'tAsu'
@@ -17,12 +16,15 @@
 #define AAX_DOES_AUDIOSUITE 0
 #endif
 #if AAX_DOES_AUDIOSUITE
+// Separately installed probes must also have distinct AAX product identities.
+#define PLUG_UNIQUE_ID 'tAxS'
 #define AAX_PROBE_NATIVE_ID 'tNts'
 #define AAX_TYPE_IDS AAX_PROBE_NATIVE_ID
 #define AAX_TYPE_IDS_AUDIOSUITE AAX_PROBE_AUDIOSUITE_ID
 #define AAX_PLUG_NAME_STR "AAX Bus Layout AS Probe"
 #define BUNDLE_NAME "aaxbuslayoutas"
 #else
+#define PLUG_UNIQUE_ID 'tAax'
 #define AAX_PROBE_NATIVE_ID 'tNtv'
 #define AAX_TYPE_IDS AAX_PROBE_NATIVE_ID
 #define AAX_PLUG_NAME_STR "AAX Bus Layout Native Probe"
