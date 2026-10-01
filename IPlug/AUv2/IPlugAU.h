@@ -92,6 +92,7 @@ private:
                                 UInt32 size, const void* data);
   OSStatus RenderBusLayouts(AudioUnitRenderActionFlags* flags, const AudioTimeStamp* timestamp,
                             UInt32 outputBus, UInt32 frames, AudioBufferList* output);
+  bool BusLayoutSupportedForSetup(const BusLayoutConfiguration& configuration, int direction=-1, int element=0) const;
   bool PublishPendingBusLayouts();
   BusLayoutConfiguration mPendingBusLayouts;
   std::vector<std::vector<uint8_t>> mBusLayoutProperties[2];

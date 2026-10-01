@@ -1,15 +1,18 @@
 #include "IPlugAU.h"
 #include "IPlugAU_BusLayout.h"
+#include "RealtimeGuard.h"
+#include "AUPartitionPolicy.h"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 using namespace iplug;
 #define CHECK(x) do { if (!(x)) { std::cerr << __LINE__ << ": " << #x << '\n'; std::abort(); } } while (0)
 static const BusLayoutPolicy* sPolicy=nullptr;
+static const char* sShape="4.4.1-4.4 8.2.1-8.2 2.8.1-2.8";
 class Probe : public IPlugAU
 {
 public:
-  Probe():IPlugAU(InstanceInfo{WDL_String()},Config(0,0,"4.4.1-4.4 8.2.1-8.2 2.8.1-2.8","probe","probe","test",0,1,2,0,false,false,false,false,0,false,0,0,false,0,0,0,0,"","",sPolicy)) {}
+  Probe():IPlugAU(InstanceInfo{WDL_String()},Config(0,0,sShape,"probe","probe","test",0,1,2,0,false,false,false,false,0,false,0,0,false,0,0,0,0,"","",sPolicy)) {}
   int changes=0;
   void OnBusLayoutChanged() override {++changes;}
 };
@@ -48,7 +51,7 @@ static void AdapterTest()
   UInt32 capabilitySize=0;CHECK(getInfo(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,&capabilitySize,&writable)==noErr);
   std::vector<AUChannelInfo> capabilities(capabilitySize/sizeof(AUChannelInfo));
   CHECK(get(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,capabilities.data(),&capabilitySize)==noErr);
-  CHECK(capabilities[0].inChannels==-9 && capabilities[0].outChannels==-8);
+  CHECK(capabilities[0].inChannels==4 && capabilities[0].outChannels==4);
 
   CHECK(getInfo(factory,kAudioUnitProperty_AudioChannelLayout,kAudioUnitScope_Input,0,&size,&writable)==noErr && writable && size==aulayouts::kHeaderSize);
   std::vector<uint8_t> bytes(size,0xa5);UInt32 shortSize=size-1;
@@ -112,11 +115,164 @@ static void AdapterTest()
   std::cout << "AU actual factory/property setup, atomic activation and multibus rendering passed\n";
 }
 
+
+// Exercise the actual factory/render path at the adapter's channel limit, not
+// only mapping round trips. Samples identify every delivered channel separately.
+static void WideAdapterTest(const std::vector<BusLayout>& layouts)
+{
+  BusLayoutPolicy policy;policy.defaultID=0;policy.capacities[0]={128};policy.capacities[1]={128};
+  std::string shapes;
+  for (size_t i=0;i<layouts.size();++i)
+  {
+    BusLayoutConfiguration configuration;configuration.id=static_cast<uint32_t>(i);
+    for (int d=0;d<2;++d)
+    {LayoutBus bus;bus.id=d;bus.role=BusRole::Main;bus.layout=layouts[i];bus.bypassInputBus=d ? 0 : -1;configuration.buses[d].push_back(bus);}
+    policy.configurations.push_back(configuration);
+    shapes+=std::to_string(layouts[i].NChannels())+"-"+std::to_string(layouts[i].NChannels())+" ";
+  }
+  sPolicy=&policy;sShape=shapes.c_str();
+  auto* factory=IPlugAUFactory<Probe,false>::Factory(nullptr);CHECK(factory->Open(factory,nullptr)==noErr);
+  auto* storage=reinterpret_cast<AudioComponentPlugInInstance*>(factory);
+  auto* plug=reinterpret_cast<Probe*>(&storage->mInstanceStorage);
+  const auto set=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,const void*,UInt32)>(factory->Lookup(kAudioUnitSetPropertySelect));
+  const auto initialize=reinterpret_cast<OSStatus(*)(void*)>(factory->Lookup(kAudioUnitInitializeSelect));
+  const auto uninitialize=reinterpret_cast<OSStatus(*)(void*)>(factory->Lookup(kAudioUnitUninitializeSelect));
+  const auto render=reinterpret_cast<OSStatus(*)(void*,AudioUnitRenderActionFlags*,const AudioTimeStamp*,UInt32,UInt32,AudioBufferList*)>(factory->Lookup(kAudioUnitRenderSelect));
+  int calls=0;
+  auto callback=[](void* context,AudioUnitRenderActionFlags*,const AudioTimeStamp*,UInt32,UInt32 frames,AudioBufferList* list)->OSStatus
+  {++*static_cast<int*>(context);for (UInt32 c=0;c<list->mNumberBuffers;++c) for (UInt32 f=0;f<frames;++f)
+    static_cast<float*>(list->mBuffers[c].mData)[f]=float(100*c+f+1);return noErr;};
+  AURenderCallbackStruct input{callback,&calls};
+  CHECK(set(factory,kAudioUnitProperty_SetRenderCallback,kAudioUnitScope_Input,0,&input,sizeof(input))==noErr);
+  for (const auto& layout:layouts)
+  {
+    std::vector<uint8_t> native;CHECK(aulayouts::ToNative(layout,native));
+    for (auto scope:{kAudioUnitScope_Input,kAudioUnitScope_Output})
+      CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,scope,0,native.data(),native.size())==noErr);
+    CHECK(initialize(factory)==noErr);
+    CHECK(plug->GetActiveBusLayout(kInput,0)->layout==layout);
+    CHECK(plug->GetActiveBusLayout(kOutput,0)->layout==layout);
+    for (const auto& alternative:layouts)
+      if (alternative.NChannels()==layout.NChannels() && !alternative.SameMeaning(layout))
+      {
+        const auto prior=*plug->GetActiveBusLayoutConfiguration();const int changes=plug->changes;
+        std::vector<uint8_t> other;CHECK(aulayouts::ToNative(alternative,other));
+        CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,kAudioUnitScope_Input,0,other.data(),other.size())==kAudioUnitErr_InvalidPropertyValue);
+        CHECK(*plug->GetActiveBusLayoutConfiguration()==prior && plug->changes==changes);break;
+      }
+    for (const auto& alias:layouts)
+      if (alias.SameMeaning(layout) && !(alias==layout))
+      {
+        std::vector<uint8_t> other;CHECK(aulayouts::ToNative(alias,other));const int changes=plug->changes;
+        CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,kAudioUnitScope_Input,0,other.data(),other.size())==noErr);
+        CHECK(plug->GetActiveBusLayout(kInput,0)->layout==alias && plug->changes==changes+1);
+        CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,kAudioUnitScope_Input,0,other.data(),other.size())==noErr && plug->changes==changes+1);
+        CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,kAudioUnitScope_Input,0,native.data(),native.size())==noErr);
+        CHECK(plug->GetActiveBusLayout(kInput,0)->layout==layout);break;
+      }
+    struct List {UInt32 count;AudioBuffer buffers[128];} output{};
+    float samples[128][16]{};output.count=layout.NChannels();
+    for (UInt32 c=0;c<output.count;++c)
+    {output.buffers[c].mNumberChannels=1;output.buffers[c].mDataByteSize=sizeof(samples[c]);output.buffers[c].mData=samples[c];}
+    AudioTimeStamp time{};time.mFlags=kAudioTimeStampSampleTimeValid;time.mSampleTime=calls*16;
+    AudioUnitRenderActionFlags flags=0;const int before=calls;
+    {realtimecheck::Scope guard;CHECK(render(factory,&flags,&time,0,16,reinterpret_cast<AudioBufferList*>(&output))==noErr && calls==before+1);}
+    for (UInt32 c=0;c<output.count;++c) for (int f=0;f<16;++f) CHECK(samples[c][f]==float(100*c+f+1));
+    {realtimecheck::Scope guard;CHECK(render(factory,&flags,&time,0,16,reinterpret_cast<AudioBufferList*>(&output))==noErr && calls==before+1);}
+    // Reject a malformed late channel before pulling inputs or running DSP.
+    output.buffers[output.count-1].mDataByteSize=sizeof(float);
+    time.mSampleTime+=16;
+    CHECK(render(factory,&flags,&time,0,16,reinterpret_cast<AudioBufferList*>(&output))!=noErr && calls==before+1);
+    CHECK(uninitialize(factory)==noErr);
+  }
+  CHECK(factory->Close(factory)==noErr);sPolicy=nullptr;
+  std::cout << "AU distinct-channel rendering passed for " << layouts.size() << " named/discrete/HOA layouts through 128 channels\n";
+}
+
+static void StrictWidthAdvertisementTest()
+{
+  BusLayoutPolicy policy;policy.defaultID=2;policy.capacities[0]={2};policy.capacities[1]={2};
+  for (auto tag:{kAudioChannelLayoutTag_Mono,kAudioChannelLayoutTag_Stereo})
+  {BusLayoutConfiguration c;auto layout=NativeLayout(tag);c.id=layout.NChannels();for(int d=0;d<2;++d){LayoutBus bus;bus.id=d;bus.role=BusRole::Main;bus.layout=layout;bus.bypassInputBus=d ? 0 : -1;c.buses[d].push_back(bus);}policy.configurations.push_back(c);}
+  sPolicy=&policy;sShape="1-1 2-2";
+  auto* factory=IPlugAUFactory<Probe,false>::Factory(nullptr);CHECK(factory->Open(factory,nullptr)==noErr);
+  const auto get=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,void*,UInt32*)>(factory->Lookup(kAudioUnitGetPropertySelect));
+  const auto set=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,const void*,UInt32)>(factory->Lookup(kAudioUnitSetPropertySelect));
+  AUChannelInfo capabilities[2]{};UInt32 size=sizeof(capabilities);
+  CHECK(get(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,capabilities,&size)==noErr);
+  CHECK(size==sizeof(AUChannelInfo) && capabilities[0].inChannels==2 && capabilities[0].outChannels==2);
+  // Named mono requires an explicit layout; a width-only change stays anonymous.
+  for(auto scope:{kAudioUnitScope_Input,kAudioUnitScope_Output})
+  {AudioStreamBasicDescription stream{};size=sizeof(stream);CHECK(get(factory,kAudioUnitProperty_StreamFormat,scope,0,&stream,&size)==noErr);stream.mChannelsPerFrame=1;CHECK(set(factory,kAudioUnitProperty_StreamFormat,scope,0,&stream,sizeof(stream))==noErr);}
+  const auto initialize=reinterpret_cast<OSStatus(*)(void*)>(factory->Lookup(kAudioUnitInitializeSelect));CHECK(initialize(factory)!=noErr);
+  AudioChannelLayout mono{};mono.mChannelLayoutTag=kAudioChannelLayoutTag_Mono;
+  for(auto scope:{kAudioUnitScope_Input,kAudioUnitScope_Output}) CHECK(set(factory,kAudioUnitProperty_AudioChannelLayout,scope,0,&mono,aulayouts::kHeaderSize)==noErr);
+  CHECK(initialize(factory)==noErr);
+  CHECK(factory->Close(factory)==noErr);
+  // A common-valid input-only declaration is not an AU output-producing unit.
+  policy.configurations.resize(1);policy.configurations[0].id=1;policy.defaultID=1;policy.capacities[1].clear();policy.configurations[0].buses[1].clear();sShape="1-0";
+  CHECK(policy.IsValid());factory=IPlugAUFactory<Probe,false>::Factory(nullptr);CHECK(factory->Open(factory,nullptr)==noErr);
+  const auto invalidGet=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,void*,UInt32*)>(factory->Lookup(kAudioUnitGetPropertySelect));
+  size=sizeof(capabilities);CHECK(invalidGet(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,capabilities,&size)==kAudioUnitErr_InvalidPropertyValue);
+  CHECK(factory->Close(factory)==noErr);sPolicy=nullptr;
+}
+
+static void PartitionAdvertisementTest()
+{
+  sPolicy=&AUPartitionPolicy();sShape=kAUPartitionShape;
+  auto* factory=IPlugAUFactory<Probe,false>::Factory(nullptr);CHECK(factory->Open(factory,nullptr)==noErr);
+  const auto getInfo=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,UInt32*,Boolean*)>(factory->Lookup(kAudioUnitGetPropertyInfoSelect));
+  const auto get=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,void*,UInt32*)>(factory->Lookup(kAudioUnitGetPropertySelect));
+  const auto set=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement,const void*,UInt32)>(factory->Lookup(kAudioUnitSetPropertySelect));
+  const auto initialize=reinterpret_cast<OSStatus(*)(void*)>(factory->Lookup(kAudioUnitInitializeSelect));
+  const auto uninitialize=reinterpret_cast<OSStatus(*)(void*)>(factory->Lookup(kAudioUnitUninitializeSelect));
+  const auto widths=[&]() {
+    UInt32 size=0;Boolean writable=false;CHECK(getInfo(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,&size,&writable)==noErr);
+    std::vector<AUChannelInfo> result(size/sizeof(AUChannelInfo));CHECK(get(factory,kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global,0,result.data(),&size)==noErr);return result;
+  };
+  auto initial=widths();CHECK(initial.size()==2 && initial[0].inChannels==1 && initial[0].outChannels==1 && initial[1].inChannels==2 && initial[1].outChannels==2);
+  // auval changes the main pair while preserving the default auxiliary width.
+  for (const auto& pair:initial)
+  {
+    for (int d=0;d<2;++d)
+    {AudioStreamBasicDescription stream{};UInt32 size=sizeof(stream);auto scope=d ? kAudioUnitScope_Output : kAudioUnitScope_Input;
+      CHECK(get(factory,kAudioUnitProperty_StreamFormat,scope,0,&stream,&size)==noErr);stream.mChannelsPerFrame=d ? pair.outChannels : pair.inChannels;
+      CHECK(set(factory,kAudioUnitProperty_StreamFormat,scope,0,&stream,sizeof(stream))==noErr);}
+    CHECK(initialize(factory)==noErr);CHECK(uninitialize(factory)==noErr);
+  }
+  struct Notifications {int widths=0,inputTags=0,outputTags=0;} notifications;
+  const auto listener=[](void* context,AudioUnit,AudioUnitPropertyID prop,AudioUnitScope scope,AudioUnitElement) {
+    auto& n=*static_cast<Notifications*>(context);
+    if(prop==kAudioUnitProperty_SupportedNumChannels) {CHECK(scope==kAudioUnitScope_Global);++n.widths;}
+    else if(scope==kAudioUnitScope_Input) ++n.inputTags;
+    else {CHECK(scope==kAudioUnitScope_Output);++n.outputTags;}
+  };
+  const auto addListener=reinterpret_cast<OSStatus(*)(void*,AudioUnitPropertyID,AudioUnitPropertyListenerProc,void*)>(factory->Lookup(kAudioUnitAddPropertyListenerSelect));
+  for(auto prop:{kAudioUnitProperty_SupportedNumChannels,kAudioUnitProperty_SupportedChannelLayoutTags}) CHECK(addListener(factory,prop,listener,&notifications)==noErr);
+  AudioStreamBasicDescription auxiliary{};UInt32 auxiliarySize=sizeof(auxiliary);
+  CHECK(get(factory,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Input,1,&auxiliary,&auxiliarySize)==noErr);
+  auxiliary.mChannelsPerFrame=1;CHECK(set(factory,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Input,1,&auxiliary,sizeof(auxiliary))==noErr);
+  auto narrower=widths();CHECK(narrower.size()==3 && narrower.back().inChannels==3 && narrower.back().outChannels==3);
+  CHECK(notifications.widths==1 && notifications.inputTags==1 && notifications.outputTags==1);
+  UInt32 count=1;CHECK(set(factory,kAudioUnitProperty_ElementCount,kAudioUnitScope_Input,0,&count,sizeof(count))==noErr);
+  CHECK(notifications.widths==2 && notifications.inputTags==2 && notifications.outputTags==2);
+  CHECK(set(factory,kAudioUnitProperty_ElementCount,kAudioUnitScope_Input,0,&count,sizeof(count))==noErr);
+  CHECK(notifications.widths==2 && notifications.inputTags==2 && notifications.outputTags==2);
+  auto single=widths();CHECK(single.size()==4);
+  for (const auto& pair:single) CHECK(pair.inChannels==pair.outChannels && pair.inChannels>=1 && pair.inChannels<=4);
+  UInt32 size=0;Boolean writable=false;CHECK(getInfo(factory,kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Input,0,&size,&writable)==noErr);
+  std::vector<AudioChannelLayoutTag> tags(size/sizeof(AudioChannelLayoutTag));CHECK(get(factory,kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Input,0,tags.data(),&size)==noErr);
+  CHECK(std::find(tags.begin(),tags.end(),kAudioChannelLayoutTag_Unknown | 4)!=tags.end());
+  CHECK(factory->Close(factory)==noErr);sPolicy=nullptr;
+  std::cout<<"AU main-pair capability metadata matches fixed auxiliary partitions and grows after topology selection\n";
+}
+
 int main()
 {
   const AudioChannelLayoutTag namedTags[]={
 #include "AUNamed.inc"
   };
+  std::vector<BusLayout> renderLayouts;
   for (auto tag:namedTags)
   {
     if (!(tag & 0xffff)) continue;
@@ -125,6 +281,7 @@ int main()
     std::vector<uint8_t> encoded; CHECK(aulayouts::ToNative(decoded,encoded));
     BusLayout roundTrip; CHECK(aulayouts::FromNative(encoded.data(),encoded.size(),128,roundTrip));
     CHECK(decoded==roundTrip && decoded.NChannels()==(tag & 0xffff));
+    renderLayouts.push_back(decoded);
   }
   AudioChannelLayout bitmap{};bitmap.mChannelLayoutTag=kAudioChannelLayoutTag_UseChannelBitmap;
   bitmap.mChannelBitmap=kAudioChannelBit_Left | kAudioChannelBit_Right | kAudioChannelBit_TopCenterSurround;
@@ -137,6 +294,7 @@ int main()
     AudioChannelLayoutTag tag;std::memcpy(&tag,bytes.data(),sizeof(tag));CHECK((tag & 0xffff)==layout.NChannels());
     BusLayout result;CHECK(aulayouts::FromNative(bytes.data(),bytes.size(),128,result));CHECK(layout.SameMeaning(result));
     CHECK(!aulayouts::FromNative(bytes.data(),2,128,result));
+    renderLayouts.push_back(result);
   }
   struct Descriptions {AudioChannelLayoutTag tag;AudioChannelBitmap bitmap;UInt32 count;AudioChannelDescription channels[2];} desc{};
   desc.tag=kAudioChannelLayoutTag_UseChannelDescriptions;desc.count=2;
@@ -154,6 +312,16 @@ int main()
   CHECK(aulayouts::ToNative(speaker,bytes));CHECK(aulayouts::FromNative(bytes.data(),bytes.size(),128,result));CHECK(result.SameMeaning(speaker));
   CHECK(aulayouts::ToNative(BusLayout::Discrete(128),bytes));CHECK(aulayouts::FromNative(bytes.data(),bytes.size(),128,result));
   CHECK(result.NChannels()==128 && result.kind==LayoutKind::Discrete);
+  // Independent native-order expectations from the CoreAudioTypes SDK tag contract.
+  CHECK(NativeLayout(kAudioChannelLayoutTag_MPEG_5_1_A).SameMeaning(BusLayout::Speakers({SpeakerPosition::L,SpeakerPosition::R,SpeakerPosition::C,SpeakerPosition::LFE,SpeakerPosition::Ls,SpeakerPosition::Rs})));
+  CHECK(NativeLayout(kAudioChannelLayoutTag_MPEG_5_1_B).SameMeaning(BusLayout::Speakers({SpeakerPosition::L,SpeakerPosition::R,SpeakerPosition::Ls,SpeakerPosition::Rs,SpeakerPosition::C,SpeakerPosition::LFE})));
+  CHECK(NativeLayout(kAudioChannelLayoutTag_MPEG_5_1_C).SameMeaning(BusLayout::Speakers({SpeakerPosition::L,SpeakerPosition::C,SpeakerPosition::R,SpeakerPosition::Ls,SpeakerPosition::Rs,SpeakerPosition::LFE})));
+  CHECK(NativeLayout(kAudioChannelLayoutTag_MPEG_5_1_D).SameMeaning(BusLayout::Speakers({SpeakerPosition::C,SpeakerPosition::L,SpeakerPosition::R,SpeakerPosition::Ls,SpeakerPosition::Rs,SpeakerPosition::LFE})));
   AdapterTest();
+  renderLayouts.push_back(NativeLayout(kAudioChannelLayoutTag_DiscreteInOrder | 128));
+  renderLayouts.push_back(NativeLayout(kAudioChannelLayoutTag_Unknown | 128));
+  WideAdapterTest(renderLayouts);
+  PartitionAdvertisementTest();
+  StrictWidthAdvertisementTest();
   std::cout << "AU mapping passed\n";
 }

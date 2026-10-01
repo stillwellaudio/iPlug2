@@ -1,4 +1,5 @@
 #include "IPlugVST3.h"
+#include "RealtimeGuard.h"
 #include <cstdlib>
 #include <iostream>
 #include <cstring>
@@ -43,6 +44,7 @@ int main()
   policy.defaultID=17; policy.configurations={StereoConfig(17,SpeakerArr::k40Music),StereoConfig(99,SpeakerArr::k40Cine)};
   for (unsigned order=1;order<=7;++order) policy.configurations.push_back(StereoConfig(200+order,vst3layouts::AmbisonicArrangement(order)));
   Probe probe(&policy);
+  const auto process=[&](ProcessData& data) {realtimecheck::Scope guard;return probe.process(data);};
   CHECK(probe.IPlugVST3ProcessorBase::Initialize(&probe)); // Exact same bus initialization used by adapter.
   CHECK(probe.changes==1);
   for (int d=0;d<2;++d) for (int b=0;b<3;++b) CHECK(probe.activateBus(kAudio,d,b,true)==kResultOk);
@@ -66,27 +68,36 @@ int main()
     ProcessSetup setup{}; setup.symbolicSampleSize=kSample64;setup.sampleRate=48000;setup.maxSamplesPerBlock=32;
     CHECK(probe.setupProcessing(setup)==kResultOk);
     ProcessData data{}; data.symbolicSampleSize=kSample64;data.numSamples=16;data.numInputs=data.numOutputs=3;data.inputs=inBuses;data.outputs=outBuses;
-    CHECK(probe.process(data)==kResultOk);
+    CHECK(process(data)==kResultOk);
     for (int c=0;c<width*3;++c) CHECK(!std::memcmp(in[c].data(),out[c].data(),16*sizeof(double)));
-    data.numInputs=1;CHECK(probe.process(data)==kInvalidArgument);data.numInputs=3;
-    data.numOutputs=1;CHECK(probe.process(data)==kInvalidArgument);data.numOutputs=3;
+    data.numInputs=1;CHECK(process(data)==kInvalidArgument);data.numInputs=3;
+    data.numOutputs=1;CHECK(process(data)==kInvalidArgument);data.numOutputs=3;
     auto* savedOutput=outBuses[2].channelBuffers64;
-    outBuses[2].channelBuffers64=nullptr;CHECK(probe.process(data)==kInvalidArgument);
+    outBuses[2].channelBuffers64=nullptr;CHECK(process(data)==kInvalidArgument);
     outBuses[2].channelBuffers64=savedOutput;
-    auto* savedChannel=savedOutput[0];savedOutput[0]=nullptr;CHECK(probe.process(data)==kInvalidArgument);savedOutput[0]=savedChannel;
-    outBuses[2].numChannels=width-1;CHECK(probe.process(data)==kInvalidArgument);outBuses[2].numChannels=width;
-    data.numSamples=0;CHECK(probe.process(data)==kResultOk);
+    auto* savedChannel=savedOutput[0];savedOutput[0]=nullptr;CHECK(process(data)==kInvalidArgument);savedOutput[0]=savedChannel;
+    outBuses[2].numChannels=width-1;CHECK(process(data)==kInvalidArgument);outBuses[2].numChannels=width;
+    data.numSamples=0;CHECK(process(data)==kResultOk);
     std::vector<std::vector<float>> fin(width*3,std::vector<float>(16)),fout(width*3,std::vector<float>(16,-1));
     std::vector<float*> fp(width*3),fo(width*3);
     for (int c=0;c<width*3;++c) {fp[c]=fin[c].data();fo[c]=fout[c].data();for (int f=0;f<16;++f) fin[c][f]=float(c*100+f+1);}
     for (int b=0;b<3;++b) {inBuses[b].channelBuffers32=fp.data()+b*width;outBuses[b].channelBuffers32=fo.data()+b*width;}
     setup.symbolicSampleSize=kSample32;CHECK(probe.setupProcessing(setup)==kResultOk);
-    data.symbolicSampleSize=kSample32;data.numSamples=16;CHECK(probe.process(data)==kResultOk);
+    data.symbolicSampleSize=kSample32;data.numSamples=16;CHECK(process(data)==kResultOk);
     for (int c=0;c<width*3;++c) CHECK(!std::memcmp(fin[c].data(),fout[c].data(),16*sizeof(float)));
-    inBuses[1].silenceFlags=1;CHECK(probe.process(data)==kResultOk);CHECK(fout[width][0]==0 && fout[width+1][0]==fin[width+1][0]);
+    inBuses[1].silenceFlags=1;CHECK(process(data)==kResultOk);CHECK(fout[width][0]==0 && fout[width+1][0]==fin[width+1][0]);
     CHECK(probe.activateBus(kAudio,Steinberg::Vst::kOutput,2,false)==kResultOk);
-    CHECK(probe.process(data)==kResultOk);
+    CHECK(process(data)==kResultOk);
+    CHECK(probe.activateBus(kAudio,Steinberg::Vst::kInput,2,false)==kResultOk);
+    data.numInputs=data.numOutputs=2;inBuses[1].silenceFlags=0;
+    CHECK(process(data)==kResultOk); // SDK permits omitted trailing inactive buses.
+    for (int c=0;c<width*2;++c) CHECK(!std::memcmp(fin[c].data(),fout[c].data(),16*sizeof(float)));
+    data.numInputs=1;CHECK(process(data)==kInvalidArgument);data.numInputs=2;
+    data.numOutputs=1;CHECK(process(data)==kInvalidArgument);data.numOutputs=2;
     CHECK(probe.activateBus(kAudio,Steinberg::Vst::kOutput,2,true)==kResultOk);
+    CHECK(process(data)==kInvalidArgument);data.numOutputs=3;
+    CHECK(probe.activateBus(kAudio,Steinberg::Vst::kInput,2,true)==kResultOk);
+    CHECK(process(data)==kInvalidArgument);data.numInputs=3;
   }
   const auto prior=*probe.GetActiveBusLayoutConfiguration();
   const int previousChanges=probe.changes;

@@ -256,6 +256,9 @@ void  AAX_CALLBACK  AAX_CIPlugParameters::StaticRenderAudio(AAX_SIPlugRenderInfo
 AAX_CIPlugParameters::SParamValList AAX_CIPlugParameters::GetUpdatesForState(int64_t inTargetStateNum)
 {
   SParamValList paramValList;
+  // Ordinary IPlugAAX does not register synchronized parameters. Avoid
+  // constructing the SDK queue (and its heap-backed mutex) on every render.
+  if (mSynchronizedParameters.empty()) return paramValList;
   TNumberedStateListQueue stateLists;
   
   for (// Initialization

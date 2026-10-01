@@ -40,10 +40,11 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   
   if (CStringHasContents(info.mHost->version))
   {
-    // TODO - check host version string
-    int ver, rmaj, rmin;
+    // Host versions need not contain three numeric components.
+    int ver=0, rmaj=0, rmin=0;
     sscanf(info.mHost->version, "%d.%d.%d", &ver, &rmaj, &rmin);
-    version = (ver << 16) + (rmaj << 8) + rmin;
+    if (ver>=0 && ver<=0x7fff && rmaj>=0 && rmaj<=0xff && rmin>=0 && rmin<=0xff)
+      version = (ver << 16) + (rmaj << 8) + rmin;
   }
   
   // Create space to store audio pointers

@@ -569,10 +569,12 @@ bool IPlugVST3ProcessorBase::ValidBusLayoutProcess(const ProcessData& data, cons
       static_cast<size_t>(data.numInputs)>active->buses[0].size() ||
       static_cast<size_t>(data.numOutputs)>active->buses[1].size() ||
       (data.numInputs && !data.inputs) || (data.numOutputs && !data.outputs)) return false;
-  // ProcessData supplies a slot for every advertised bus, including inactive
-  // buses. The zero-frame parameter-flush call may omit all audio buses.
-  if (data.numSamples && (static_cast<size_t>(data.numInputs)!=active->buses[0].size() ||
-                          static_cast<size_t>(data.numOutputs)!=active->buses[1].size())) return false;
+  // The SDK permits omitted trailing inactive buses. A zero-frame parameter
+  // flush may omit all audio buses, including active ones.
+  if (data.numSamples)
+    for (int d=0; d<2; ++d)
+      for (size_t b=static_cast<size_t>(d ? data.numOutputs : data.numInputs); b<active->buses[d].size(); ++b)
+        if (active->buses[d][b].active) return false;
   for (int d=0; d<2; ++d)
   {
     const auto* buses=d ? data.outputs : data.inputs;

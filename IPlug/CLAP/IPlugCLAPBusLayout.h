@@ -119,6 +119,9 @@ inline bool ClapConfigurationRepresentable(const BusLayoutConfiguration& configu
 {
   for (const auto& buses:configuration.buses) for (const auto& bus:buses)
   {
+    // Ports start active; without audio-ports-activation an inactive port
+    // cannot be represented to the host. Do not silently discard its buffers.
+    if (!bus.active) return false;
     if (bus.layout.kind==LayoutKind::Speakers && !ClapBusLayoutPortType(bus.layout)) return false;
     if (bus.layout.kind==LayoutKind::Speakers || bus.layout.kind==LayoutKind::Discrete)
       for (size_t c=0;c<bus.layout.channels.size();++c)

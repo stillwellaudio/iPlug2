@@ -167,8 +167,8 @@ IPlugVST2::IPlugVST2(const InstanceInfo& info, const Config& config)
     const auto* c=BusLayoutsValid() ? GetBusLayoutPolicy()->Find(GetBusLayoutPolicy()->defaultID) : nullptr;
     VstSpeakerArrangement in{},out{};
     if (c && c->buses[0].size()<=1 && c->buses[1].size()<=1 &&
-        (c->buses[0].empty() || VST2Arrangement(c->buses[0][0].layout,in)) &&
-        (c->buses[1].empty() || VST2Arrangement(c->buses[1][0].layout,out)))
+        (c->buses[0].empty() || (c->buses[0][0].active && VST2Arrangement(c->buses[0][0].layout,in))) &&
+        (c->buses[1].empty() || (c->buses[1][0].active && VST2Arrangement(c->buses[1][0].layout,out))))
     {nInputs=in.numChannels;nOutputs=out.numChannels;}
   }
 
@@ -316,6 +316,8 @@ bool IPlugVST2::SendSysEx(const ISysEx& msg)
 
 void IPlugVST2::HostSpecificInit()
 {
+  // Opt-in ports are fixed by their declared policy, not reserved capacity.
+  if (HasBusLayouts()) return;
   switch (GetHost())
   {
     case kHostAudition:
@@ -383,8 +385,8 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
         const auto* policy=_this->GetBusLayoutPolicy(); const auto* layout=policy ? policy->Find(policy->defaultID) : nullptr;
         VstSpeakerArrangement in {}, out {};
         if (!layout || layout->buses[kInput].size()>1 || layout->buses[kOutput].size()>1 ||
-            (layout->buses[kInput].size() && !VST2Arrangement(layout->buses[kInput][0].layout,in)) ||
-            (layout->buses[kOutput].size() && !VST2Arrangement(layout->buses[kOutput][0].layout,out)) || ! _this->CommitBusLayout(*layout)) return 0;
+            (layout->buses[kInput].size() && (!layout->buses[kInput][0].active || !VST2Arrangement(layout->buses[kInput][0].layout,in))) ||
+            (layout->buses[kOutput].size() && (!layout->buses[kOutput][0].active || !VST2Arrangement(layout->buses[kOutput][0].layout,out))) || ! _this->CommitBusLayout(*layout)) return 0;
         _this->mInputSpkrArr=in; _this->mOutputSpkrArr=out; _this->mAEffect.numInputs=in.numChannels; _this->mAEffect.numOutputs=out.numChannels;
       }
       _this->OnParamReset(kReset);

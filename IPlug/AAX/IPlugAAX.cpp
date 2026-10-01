@@ -297,9 +297,21 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   bool bypass;
   mBypassParameter->GetValueAsBool(&bypass);
   
-  AAX_EStemFormat inFormat, outFormat;
-  Controller()->GetInputStemFormat(&inFormat);
-  Controller()->GetOutputStemFormat(&outFormat);
+  const int32_t numSamples=*(pRenderInfo->mNumSamples);
+  const auto clearLayoutOutputs=[&]() {
+    const auto* active=GetActiveBusLayoutConfiguration();
+    if (!active || !pRenderInfo->mAudioOutputs || numSamples<=0) return;
+    int channel=0;
+    for (const auto& bus:active->buses[kOutput])
+      for (uint32_t c=0;c<bus.layout.NChannels();++c,++channel)
+        if (pRenderInfo->mAudioOutputs[channel])
+          memset(pRenderInfo->mAudioOutputs[channel],0,static_cast<size_t>(numSamples)*sizeof(float));
+  };
+  AAX_EStemFormat inFormat=AAX_eStemFormat_None, outFormat=AAX_eStemFormat_None;
+  const auto inputStatus=Controller()->GetInputStemFormat(&inFormat);
+  const auto outputStatus=Controller()->GetOutputStemFormat(&outFormat);
+  if (HasBusLayouts() && (inputStatus!=AAX_SUCCESS || outputStatus!=AAX_SUCCESS))
+  { clearLayoutOutputs(); return; }
   
   if (DoesMIDIIn()) 
   {
@@ -319,7 +331,6 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   AAX_IMIDINode* pTransportNode = pRenderInfo->mTransportNode;
   mTransport = pTransportNode->GetTransport();
 
-  int32_t numSamples = *(pRenderInfo->mNumSamples);
   int32_t numInChannels = AAX_STEM_FORMAT_CHANNEL_COUNT(inFormat);
   int32_t numOutChannels = AAX_STEM_FORMAT_CHANNEL_COUNT(outFormat);
 
@@ -327,13 +338,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
   {
     if (HasBusLayouts())
     {
-      if (pRenderInfo->mAudioOutputs && GetActiveBusLayoutConfiguration())
-      {
-        int channels=0;
-        for (const auto& bus : GetActiveBusLayoutConfiguration()->buses[kOutput]) channels += static_cast<int>(bus.layout.NChannels());
-        for (int channel=0; channel<channels; ++channel)
-          if (pRenderInfo->mAudioOutputs[channel]) memset(pRenderInfo->mAudioOutputs[channel], 0, static_cast<size_t>(numSamples) * sizeof(float));
-      }
+      clearLayoutOutputs();
       return; // Never allocate on the AAX render thread.
     }
     SetBlockSize(numSamples);

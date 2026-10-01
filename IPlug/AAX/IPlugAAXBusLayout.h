@@ -91,7 +91,8 @@ inline bool ConfigurationSupported(const BusLayoutConfiguration& c, bool require
     for (size_t b=0; b<c.buses[d].size(); ++b)
     {
       const auto& bus=c.buses[d][b]; AAX_EStemFormat stem;
-      if (!ToStem(bus.layout,stem)) return false;
+      // Static AAX stems have no per-bus activation negotiation.
+      if (!bus.active || !ToStem(bus.layout,stem)) return false;
       if (d == 1 && (b == 0 ? bus.role != BusRole::Main : bus.role != BusRole::Auxiliary)) return false;
       if (d == 0 && (b == 0 ? bus.role != BusRole::Main : bus.role != BusRole::Sidechain || stem != AAX_eStemFormat_Mono)) return false;
     }

@@ -711,20 +711,18 @@ OSStatus IPlugAU::GetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
       ASSERT_SCOPE(kAudioUnitScope_Global);
       if (HasBusLayouts())
       {
+        if (!mPendingBusLayoutsValid) return kAudioUnitErr_InvalidPropertyValue;
         std::vector<AUChannelInfo> capabilities;
         for (const auto& configuration:GetBusLayoutPolicy()->configurations)
         {
+          if (!BusLayoutSupportedForSetup(configuration)) continue;
+          // Positive counts describe the main pair. A negative aggregate also
+          // promises arbitrary per-bus partitions, which finite policies need
+          // not accept. Preserve auxiliary setup when testing main formats.
           AUChannelInfo info{};
-          SInt16* counts[]={&info.inChannels,&info.outChannels};
-          bool expressible=true;
-          for (int d=0;d<2;++d)
-          {
-            uint64_t total=0;
-            for (const auto& bus:configuration.buses[d]) total+=bus.layout.NChannels();
-            if (total>INT16_MAX || (configuration.buses[d].size()>1 && total<=2)) {expressible=false;break;}
-            *counts[d]=static_cast<SInt16>(configuration.buses[d].size()>1 ? -static_cast<int>(total) : total);
-          }
-          if (expressible && std::none_of(capabilities.begin(),capabilities.end(),[&](const AUChannelInfo& c) {return c.inChannels==info.inChannels && c.outChannels==info.outChannels;})) capabilities.push_back(info);
+          info.inChannels=configuration.buses[kInput].empty() ? 0 : static_cast<SInt16>(configuration.buses[kInput][0].layout.NChannels());
+          info.outChannels=static_cast<SInt16>(configuration.buses[kOutput][0].layout.NChannels());
+          if (std::none_of(capabilities.begin(),capabilities.end(),[&](const AUChannelInfo& c) {return c.inChannels==info.inChannels && c.outChannels==info.outChannels;})) capabilities.push_back(info);
         }
         const UInt32 required=static_cast<UInt32>(capabilities.size()*sizeof(AUChannelInfo));
         const UInt32 available=*pDataSize;*pDataSize=required;
@@ -2638,7 +2636,7 @@ OSStatus IPlugAU::GetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope 
     std::vector<AudioChannelLayoutTag> tags;
     for (const auto& c:GetBusLayoutPolicy()->configurations)
     {
-      if (element>=c.buses[d].size()) continue;
+      if (element>=c.buses[d].size() || !BusLayoutSupportedForSetup(c,d,element)) continue;
       std::vector<uint8_t> native;
       if (!aulayouts::ToNative(c.buses[d][element].layout,native)) continue;
       AudioChannelLayoutTag tag; std::memcpy(&tag,native.data(),sizeof(tag));
@@ -2699,6 +2697,9 @@ OSStatus IPlugAU::SetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope 
     for (size_t b=old;b<count;++b) GetBus(scope,static_cast<UInt32>(b))->mNHostChannels=mPendingBusLayouts.buses[d][b].layout.NChannels();
     mBusLayoutRenderCached=false;
     InformListeners(prop,scope);
+    InformListeners(kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global);
+    InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Input);
+    InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Output);
     return noErr;
   }
   if (element>=mPendingBusLayouts.buses[d].size()) return kAudioUnitErr_InvalidElement;
@@ -2731,6 +2732,12 @@ OSStatus IPlugAU::SetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope 
     SetSampleRate(stream.mSampleRate);mBusLayoutRenderCached=false;
     InformListeners(prop,scope);
     if (widthChanged) InformListeners(kAudioUnitProperty_AudioChannelLayout,scope);
+    if (widthChanged)
+    {
+      InformListeners(kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global);
+      InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Input);
+      InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Output);
+    }
     return noErr;
   }
   BusLayout layout;
@@ -2763,7 +2770,35 @@ OSStatus IPlugAU::SetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope 
   mBusLayoutRenderCached=false;
   InformListeners(prop,scope);
   if (widthChanged) InformListeners(kAudioUnitProperty_StreamFormat,scope);
+  InformListeners(kAudioUnitProperty_SupportedNumChannels,kAudioUnitScope_Global);
+  InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Input);
+  InformListeners(kAudioUnitProperty_SupportedChannelLayoutTags,kAudioUnitScope_Output);
   return noErr;
+}
+
+bool IPlugAU::BusLayoutSupportedForSetup(const BusLayoutConfiguration& configuration, int direction, int element) const
+{
+  if (!mPendingBusLayoutsValid || configuration.buses[kOutput].empty()) return false;
+  auto candidate=mPendingBusLayouts;
+  for (int d=0;d<2;++d)
+  {
+    if (configuration.buses[d].size()!=candidate.buses[d].size()) return false;
+    if (!candidate.buses[d].empty())
+    {
+      const auto& layout=configuration.buses[d][0].layout;
+      if (direction>=0) candidate.buses[d][0].layout=layout;
+      else if (layout.NChannels()!=candidate.buses[d][0].layout.NChannels())
+        candidate.buses[d][0].layout=BusLayout::Discrete(layout.NChannels(),true);
+    }
+  }
+  // Layout-tag queries supply identity; channel-count queries supply only width.
+  if (direction>=0) candidate.buses[direction][element].layout=configuration.buses[direction][element].layout;
+  for (const auto& buses:candidate.buses) for (const auto& bus:buses)
+  {
+    std::vector<uint8_t> native;
+    if (bus.layout.NChannels()>AU_MAX_IO_CHANNELS || !aulayouts::ToNative(bus.layout,native)) return false;
+  }
+  return CanApplyBusLayout(candidate);
 }
 
 bool IPlugAU::PublishPendingBusLayouts()

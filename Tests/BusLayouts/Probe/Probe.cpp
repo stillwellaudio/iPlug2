@@ -11,8 +11,14 @@ using Adapter=iplug::IPlugCLAP;
 using Adapter=iplug::IPlugAU;
 #endif
 using namespace iplug;
+#if defined(AU_API) && defined(BUS_LAYOUT_AU_PARTITION_PROBE)
+#include "../AUPartitionPolicy.h"
+#endif
 static const BusLayoutPolicy& Policy()
 {
+#if defined(AU_API) && defined(BUS_LAYOUT_AU_PARTITION_PROBE)
+  return AUPartitionPolicy();
+#else
   static const BusLayoutPolicy policy=[] {
     BusLayoutPolicy p;p.defaultID=2;
 #if defined(AU_API)
@@ -67,10 +73,13 @@ static const BusLayoutPolicy& Policy()
 #endif
     return p;
   }();return policy;
+#endif
 }
 static Config ProbeConfig()
 {
-#if defined(AU_API)
+#if defined(AU_API) && defined(BUS_LAYOUT_AU_PARTITION_PROBE)
+  const char* shape=kAUPartitionShape;
+#elif defined(AU_API)
   const char* shape="2-2 4-4 9-9 16-16 25-25 36-36 49-49 64-64";
 #else
   const char* shape="2.2.1-2.2 4.4.1-4.4 9.9.1-9.9 16.16.1-16.16 25.25.1-25.25 36.36.1-36.36 49.49.1-49.49 64.64.1-64.64";

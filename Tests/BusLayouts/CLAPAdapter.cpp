@@ -1,4 +1,5 @@
 #include "IPlugCLAP.h"
+#include "RealtimeGuard.h"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -27,6 +28,8 @@ public:
   int blocks=0;
   int changes=0;
 };
+static clap_process_status Process(const clap_plugin* plugin,const clap_process* data)
+{realtimecheck::Scope guard;return plugin->process(plugin,data);}
 static void Data(clap_audio_buffer& b,float** p) { b.data32=p; }
 static void Data(clap_audio_buffer& b,double** p) { b.data64=p; }
 template<typename T> static void Routing(Probe& plug,const clap_plugin* plugin,bool bypass)
@@ -48,7 +51,7 @@ template<typename T> static void Routing(Probe& plug,const clap_plugin* plugin,b
   plug.SetBypassed(bypass);
   CHECK(plugin->activate(plugin,48000.,0,frames));CHECK(plugin->start_processing(plugin));
   const int blocks=plug.blocks;
-  CHECK(plugin->process(plugin,&process)!=CLAP_PROCESS_ERROR);
+  CHECK(Process(plugin,&process)!=CLAP_PROCESS_ERROR);
   CHECK(plug.blocks==blocks+(bypass ? 0 : 1));
   n=0;for(size_t b=0;b<ob.size();++b) {
     CHECK(ob[b].constant_mask==0);
@@ -62,10 +65,10 @@ template<typename T> static void Routing(Probe& plug,const clap_plugin* plugin,b
   clap_event_param_value event{};event.header.size=sizeof(event);event.header.space_id=CLAP_CORE_EVENT_SPACE_ID;event.header.type=CLAP_EVENT_PARAM_VALUE;event.param_id=0;event.value=73;
   clap_input_events events{};events.ctx=&event;events.size=[](const clap_input_events*)->uint32_t{return 1;};events.get=[](const clap_input_events* e,uint32_t)->const clap_event_header* {return &static_cast<const clap_event_param_value*>(e->ctx)->header;};
   process.in_events=&events;--ob[0].channel_count;ob[0].constant_mask=7;
-  CHECK(plugin->process(plugin,&process)==CLAP_PROCESS_ERROR && plug.GetParam(0)->Value()==2);
+  CHECK(Process(plugin,&process)==CLAP_PROCESS_ERROR && plug.GetParam(0)->Value()==2);
   CHECK(ob[0].constant_mask==7);
   ++ob[0].channel_count;process.in_events=nullptr;
-  process.frames_count=0;CHECK(plugin->process(plugin,&process)!=CLAP_PROCESS_ERROR);
+  process.frames_count=0;CHECK(Process(plugin,&process)!=CLAP_PROCESS_ERROR);
   plugin->stop_processing(plugin);plugin->deactivate(plugin);plug.SetBypassed(false);
 }
 int main()
@@ -76,6 +79,11 @@ int main()
   policy.accept=[](const BusLayoutConfiguration& c) {return c.SameMeaning(Layout(0,4,4));};
   clap_plugin_descriptor descriptor{};descriptor.clap_version=CLAP_VERSION;descriptor.id="org.test.bus-layout";descriptor.name="probe";descriptor.vendor="test";
   clap_host host{};host.clap_version=CLAP_VERSION;host.name="test";host.version="1";host.get_extension=GetExtension;host.request_restart=Request;host.request_process=Request;host.request_callback=Request;
+  const char* versions[]={"1","1.2","1.2.3","1.2.3-beta","host build","-1.2.3","32768.0.0","1.256.0",""};
+  const int packed[]={0x10000,0x10200,0x10203,0x10203,0,0,0,0,0};
+  for (size_t v=0;v<sizeof(packed)/sizeof(packed[0]);++v)
+  {host.version=versions[v];Probe versionProbe({&descriptor,&host},&policy);CHECK(versionProbe.GetHostVersion(false)==packed[v]);}
+  host.version="1";
   Probe plug({&descriptor,&host},&policy);const clap_plugin* plugin=plug.clapPlugin();CHECK(plugin->init(plugin));
   const auto* ports=static_cast<const clap_plugin_audio_ports*>(plugin->get_extension(plugin,CLAP_EXT_AUDIO_PORTS));
   const auto* configs=static_cast<const clap_plugin_audio_ports_config*>(plugin->get_extension(plugin,CLAP_EXT_AUDIO_PORTS_CONFIG));
@@ -128,5 +136,14 @@ int main()
   CHECK(namedConfigs->select(native,30)&&ambisonic->get_config(native,false,0,&convention));
   CHECK(convention.ordering==CLAP_AMBISONIC_ORDERING_FUMA&&convention.normalization==CLAP_AMBISONIC_NORMALIZATION_MAXN);
   CHECK(namedConfigs->select(native,40)&&!ambisonic->get_config(native,true,0,&convention));
+  auto inactive=named;inactive.configurations[0].buses[1][0].active=false;
+  Probe rejected({&descriptor,&host},&inactive);const auto* rejectedPlugin=rejected.clapPlugin();
+  CHECK(!rejectedPlugin->init(rejectedPlugin)); // No activation extension can describe this inactive port.
+  auto selectable=named;auto unavailable=selectable.configurations[0];unavailable.id=900;
+  unavailable.buses[0][0].active=false;selectable.configurations.push_back(unavailable);
+  Probe filtered({&descriptor,&host},&selectable);const auto* filteredPlugin=filtered.clapPlugin();CHECK(filteredPlugin->init(filteredPlugin));
+  const auto* filteredConfigs=static_cast<const clap_plugin_audio_ports_config*>(filteredPlugin->get_extension(filteredPlugin,CLAP_EXT_AUDIO_PORTS_CONFIG));
+  CHECK(filteredConfigs && filteredConfigs->count(filteredPlugin)==named.configurations.size());
+  CHECK(!filteredConfigs->select(filteredPlugin,900) && filtered.GetActiveBusLayoutConfiguration()->id==1);
   std::cout << "CLAP exact routing, conversion, constant/null input, bypass, topology cycles, stable/unlisted IDs and atomic rejection passed\n";
 }

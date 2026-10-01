@@ -2,6 +2,7 @@
 #include "IPlugAAX.h"
 #include "IPlugAAXBusLayout.h"
 #include "AAXTestHost.h"
+#include "RealtimeGuard.h"
 #include "AAX_CString.h"
 #include <iostream>
 #include <cstdlib>
@@ -129,6 +130,7 @@ struct RenderBlock
   void Render()
   {
     AAX_SIPlugRenderInfo* instances[] = {&info};
+    realtimecheck::Scope guard;
     AAX_CIPlugParameters::StaticRenderAudio(instances, instances + 1);
   }
   void Clear() { for (auto& channel : output) std::fill(channel.begin(), channel.end(), sentinel); }
@@ -182,6 +184,14 @@ void CheckRouting()
       host.output = width == 2 ? AAX_eStemFormat_Mono : AAX_eStemFormat_Stereo;
       block.Render(); CHECK(probe.renders == beforeMismatch && block.output[0][1] == RenderBlock::sentinel);
       host.output = oldOutput;
+      for (bool inputFailure : {true, false})
+      {
+        if (inputFailure) host.inputResult=AAX_ERROR_INVALID_INTERNAL_DATA;
+        else host.outputResult=AAX_ERROR_INVALID_INTERNAL_DATA;
+        block.Clear();block.Render();CHECK(probe.renders==beforeMismatch);
+        for (const auto& channel:block.output) for (int f=1;f<=block.frames;++f) CHECK(channel[f]==0.f);
+        block.Guards();host.inputResult=host.outputResult=AAX_SUCCESS;
+      }
       block.sidechain = width + 1; block.Clear(); const int renders = probe.renders; block.Render();
       CHECK(probe.renders == renders && block.output[0][1] == RenderBlock::sentinel);
       block.sidechain = width;
@@ -290,7 +300,7 @@ void CheckRouting()
     CHECK(host.references == 1);
   }
   // Controller failures, unknown stems and ambiguous semantic pairs must fail initialization.
-  for (int failure = 0; failure < 4; ++failure)
+  for (int failure = 0; failure < 9; ++failure)
   {
     AAXTestHost host;
     if (failure == 0) host.inputResult = AAX_ERROR_UNIMPLEMENTED;
@@ -302,6 +312,14 @@ void CheckRouting()
       auto duplicate = invalid.configurations[1]; duplicate.id = 999; duplicate.aaxNativeID = 999; duplicate.aaxAudioSuiteID = 998;
       duplicate.buses[kOutput][1].layout = duplicate.buses[kOutput][2].layout;
       invalid.configurations.push_back(duplicate);
+    }
+    if (failure>=4)
+    {
+      const int direction=failure<6 ? 0 : 1;const int bus=failure-(direction ? 6 : 4);
+      invalid.configurations[0].buses[direction][bus].active=false;
+      CHECK(!aaxlayouts::ValidatePolicy(invalid,AAX_DOES_AUDIOSUITE));
+      CHECK(aaxlayouts::ToStem(invalid.configurations[0].buses[kInput][0].layout,host.input));
+      CHECK(aaxlayouts::ToStem(invalid.configurations[0].buses[kOutput][0].layout,host.output));
     }
     const auto invalidShapes = NumericShapes(invalid);
     { RoutingProbe probe(&invalid, invalidShapes.c_str()); CHECK(probe.Start(host) == AAX_ERROR_INVALID_ARGUMENT); CHECK(probe.changes == 0); }
