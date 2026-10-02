@@ -11,6 +11,7 @@
 #pragma once
 
 #include "pluginterfaces/base/ibstream.h"
+#include <limits>
 #
 #include "IPlugAPIBase.h"
 #include "IPlugVST3_Parameter.h"
@@ -66,9 +67,18 @@ struct IPlugVST3State
   
   template <class T>
   static bool SetState(T* pPlug, Steinberg::IBStream* pState)
+  try
   {
     TRACE
     
+    if (!pState)
+      return false;
+#ifdef IPLUG_VST3_STATE_MAX_BYTES
+    constexpr int maximumStateBytes = IPLUG_VST3_STATE_MAX_BYTES;
+#else
+    constexpr int maximumStateBytes = std::numeric_limits<int>::max();
+#endif
+    static_assert(maximumStateBytes > 0, "State byte limit must be positive");
     IByteChunk chunk;
     
     const int bytesPerBlock = 128;
@@ -79,10 +89,20 @@ struct IPlugVST3State
       Steinberg::int32 bytesRead = 0;
       auto status = pState->read(buffer, (Steinberg::int32) bytesPerBlock, &bytesRead);
       
-      if (bytesRead <= 0 || (status != Steinberg::kResultTrue && pPlug->GetHost() != kHostWaveLab))
+      if (bytesRead < 0 || bytesRead > bytesPerBlock)
+        return false;
+      if (bytesRead == 0)
+      {
+        if (status != Steinberg::kResultOk && status != Steinberg::kResultFalse)
+          return false;
         break;
-      
-      chunk.PutBytes(buffer, bytesRead);
+      }
+      if (status != Steinberg::kResultTrue && pPlug->GetHost() != kHostWaveLab)
+        return false;
+      const int previousSize = chunk.Size();
+      if (previousSize > maximumStateBytes - bytesRead ||
+          chunk.PutBytes(buffer, bytesRead) != previousSize + bytesRead)
+        return false;
     }
     int pos = pPlug->UnserializeState(chunk,0);
     if (pos < 0)
@@ -90,7 +110,9 @@ struct IPlugVST3State
     
     Steinberg::int32 savedBypass = 0;
     
-    pState->seek(pos,Steinberg::IBStream::IStreamSeekMode::kIBSeekSet);
+    if (pState->seek(pos, Steinberg::IBStream::IStreamSeekMode::kIBSeekSet)
+          != Steinberg::kResultOk)
+      return false;
     if (pState->read (&savedBypass, sizeof (Steinberg::int32)) != Steinberg::kResultOk) {
       return false;
     }
@@ -103,6 +125,8 @@ struct IPlugVST3State
     pPlug->OnRestoreState();
     
     return true;
+  } catch (...) {
+    return false;
   }
 };
 

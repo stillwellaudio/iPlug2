@@ -18,6 +18,7 @@
  */
 
 #include <algorithm>
+#include <limits>
 #include "wdlstring.h"
 #include "ptrlist.h"
 
@@ -143,13 +144,21 @@ public:
   /** Copies data into the chunk, placing it at the end, resizing if necessary
    * @param pSrc Pointer to the data to copy
    * @param nBytesToCopy Number of bytes to copy
-   * @return int The size of the chunk after insertion  */
+   * @return int The size after insertion, or -1 on invalid input/allocation failure */
   inline int PutBytes(const void* pSrc, int nBytesToCopy)
   {
-    int n = mBytes.GetSize();
-    mBytes.Resize(n + nBytesToCopy);
-    memcpy(mBytes.Get() + n, pSrc, nBytesToCopy);
-    return mBytes.GetSize();
+    const int n = mBytes.GetSize();
+    if (nBytesToCopy < 0 || n > std::numeric_limits<int>::max() - nBytesToCopy ||
+        (nBytesToCopy > 0 && !pSrc))
+      return -1;
+    if (nBytesToCopy == 0)
+      return n;
+    const int newSize = n + nBytesToCopy;
+    auto* bytes = mBytes.Resize(newSize);
+    if (!bytes || mBytes.GetSize() != newSize)
+      return -1;
+    memcpy(bytes + n, pSrc, nBytesToCopy);
+    return newSize;
   }
   
   /** Copy raw bytes from the IByteChunk, returning the new position for subsequent calls
