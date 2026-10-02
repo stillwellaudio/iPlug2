@@ -515,29 +515,42 @@ bool IPluginBase::SerializePresets(IByteChunk& chunk) const
 int IPluginBase::UnserializePresets(const IByteChunk& chunk, int startPos)
 {
   TRACE
+  if (startPos < 0 || startPos > chunk.Size())
+    return -1;
+
   WDL_String name;
   int n = mPresets.GetSize(), pos = startPos;
   for (int i = 0; i < n && pos >= 0; ++i)
   {
     IPreset* pPreset = mPresets.Get(i);
     pos = chunk.GetStr(name, pos);
-    strcpy(pPreset->mName, name.Get());
+    if (pos < 0 || name.GetLength() >= MAX_PRESET_NAME_LEN)
+      return -1;
     
-    Trace(TRACELOC, "%d %s", i, pPreset->mName);
+    // Read the wire flag as a byte: malformed bool representations are UB.
+    static_assert(sizeof(bool) == sizeof(uint8_t), "Preset bank bool wire size");
+    uint8_t initialized = 0;
+    pos = chunk.Get(&initialized, pos);
+    if (pos < 0 || initialized > 1)
+      return -1;
     
-    pos = chunk.Get<bool>(&(pPreset->mInitialized), pos);
-    if (pPreset->mInitialized)
+    if (initialized)
     {
-      pos = UnserializeState(chunk, pos);
-      if (pos > 0)
-      {
-        pPreset->mChunk.Clear();
-        SerializeState(pPreset->mChunk);
-      }
+      const int restoredPos = UnserializeState(chunk, pos);
+      if (restoredPos < pos || restoredPos > chunk.Size())
+        return -1;
+      IByteChunk presetState;
+      if (!SerializeState(presetState))
+        return -1;
+      pPreset->mChunk.Clear();
+      pPreset->mChunk.PutChunk(&presetState);
+      pos = restoredPos;
     }
+    memcpy(pPreset->mName, name.Get(), name.GetLength() + 1);
+    pPreset->mInitialized = initialized != 0;
+    Trace(TRACELOC, "%d %s", i, pPreset->mName);
   }
-  RestorePreset(mCurrentPresetIdx);
-  return pos;
+  return RestorePreset(mCurrentPresetIdx) ? pos : -1;
 }
 
 void IPluginBase::DumpMakePresetSrc(const char* filename) const

@@ -73,11 +73,13 @@ struct IByteGetter
    * @return int The end position in bytes after the copy, or -1 if the copy would have copied more data than in the src buffer  */
   static inline int GetBytes(const uint8_t* pSrc, int srcSize, void* pDst, int nBytesToCopy, int startPos)
   {
-    int endPos = startPos + nBytesToCopy;
-    if (startPos >= 0 && endPos <= srcSize)
+    if (startPos >= 0 && startPos <= srcSize && nBytesToCopy >= 0 &&
+        nBytesToCopy <= srcSize - startPos &&
+        (nBytesToCopy == 0 || (pSrc && pDst)))
     {
-      memcpy(pDst, pSrc + startPos, nBytesToCopy);
-      return endPos;
+      if (nBytesToCopy > 0)
+        memcpy(pDst, pSrc + startPos, nBytesToCopy);
+      return startPos + nBytesToCopy;
     }
     return -1;
   }
@@ -92,16 +94,13 @@ struct IByteGetter
   {
     int len;
     int strStartPos = GetBytes(pSrc, srcSize, &len, sizeof(len), startPos);
-    if (strStartPos >= 0)
+    if (strStartPos >= 0 && len >= 0 && len <= srcSize - strStartPos)
     {
       int strEndPos = strStartPos + len;
-      if (strEndPos <= srcSize)
-      {
-        if (len > 0)
-          str.Set((char*) (pSrc + strStartPos), len);
-        else
-          str.Set("");
-      }
+      if (len > 0)
+        str.Set((const char*) (pSrc + strStartPos), len);
+      else
+        str.Set("");
       return strEndPos;
     }
     return -1;
