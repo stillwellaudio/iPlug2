@@ -21,9 +21,28 @@ BEGIN_IPLUG_NAMESPACE
 /** Shared VST3 State management code */
 struct IPlugVST3State
 {
+  static bool WriteAll(Steinberg::IBStream* stream, const void* data, int size)
+  {
+    if (!stream || size < 0 || (size > 0 && !data))
+      return false;
+    const auto* bytes = static_cast<const char*>(data);
+    int offset = 0;
+    while (offset < size)
+    {
+      Steinberg::int32 written = 0;
+      if (stream->write(const_cast<char*>(bytes + offset), size - offset, &written)
+            != Steinberg::kResultOk || written <= 0 || written > size - offset)
+        return false;
+      offset += written;
+    }
+    return true;
+  }
+
   template <class T>
   static bool GetState(T* pPlug, Steinberg::IBStream* pState)
   {
+    if (!pState)
+      return false;
     IByteChunk chunk;
     
     // TODO: IPlugVer should be in chunk!
@@ -35,15 +54,14 @@ struct IPlugVST3State
        int chunkSize = chunk.Size();
        void* data = (void*) &chunkSize;
        state->write(data, (Steinberg::int32) sizeof(int));*/
-      pState->write(chunk.GetData(), chunk.Size());
+      if (!WriteAll(pState, chunk.GetData(), chunk.Size()))
+        return false;
     }
     else
       return false;
     
     Steinberg::int32 toSaveBypass = pPlug->GetBypassed() ? 1 : 0;
-    pState->write(&toSaveBypass, sizeof (Steinberg::int32));
-    
-    return true;
+    return WriteAll(pState, &toSaveBypass, sizeof(Steinberg::int32));
   };
   
   template <class T>
