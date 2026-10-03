@@ -1251,23 +1251,7 @@ void* IGraphicsWin::OpenWindow(void* pParent)
 
   if (mPlugWnd && TooltipsEnabled())
   {
-    static const INITCOMMONCONTROLSEX iccex = { sizeof(INITCOMMONCONTROLSEX), ICC_TAB_CLASSES };
-
-    if (InitCommonControlsEx(&iccex))
-    {
-      mTooltipWnd = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | TTS_NOPREFIX | TTS_ALWAYSTIP,
-                                   CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, mPlugWnd, NULL, mHInstance, NULL);
-      if (mTooltipWnd)
-      {
-        SetWindowPos(mTooltipWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        TOOLINFOW ti = { TTTOOLINFOW_V2_SIZE, TTF_IDISHWND | TTF_SUBCLASS, mPlugWnd, (UINT_PTR) mPlugWnd, {0, 0, 0, 0}, NULL, NULL, 0, NULL };
-        SendMessageW(mTooltipWnd, TTM_ADDTOOLW, 0, (LPARAM) &ti);
-        SendMessageW(mTooltipWnd, TTM_SETMAXTIPWIDTH, 0, TOOLTIPWND_MAXWIDTH);
-      }
-    }
-
-    if (!mTooltipWnd)
-      EnableTooltips(false);
+    UpdateTooltips();
 
 #ifdef IGRAPHICS_GL
     wglMakeCurrent(NULL, NULL);
@@ -1877,6 +1861,51 @@ bool IGraphicsWin::OpenURL(const char* url, const char* msgWindowTitle, const ch
   return false;
 }
 
+void IGraphicsWin::UpdateTooltips()
+{
+  if (!mPlugWnd)
+    return;
+
+  if (!TooltipsEnabled())
+  {
+    TRACKMOUSEEVENT eventTrack = { sizeof(TRACKMOUSEEVENT), TME_CANCEL | TME_HOVER, mPlugWnd, HOVER_DEFAULT };
+    TrackMouseEvent(&eventTrack);
+    HideTooltip();
+    mTooltipIdx = -1;
+    if (mTooltipWnd)
+    {
+      SendMessageW(mTooltipWnd, TTM_POP, 0, 0);
+      SendMessageW(mTooltipWnd, TTM_ACTIVATE, FALSE, 0);
+    }
+    return;
+  }
+
+  if (!mTooltipWnd)
+  {
+    static const INITCOMMONCONTROLSEX iccex = { sizeof(INITCOMMONCONTROLSEX), ICC_TAB_CLASSES };
+    if (InitCommonControlsEx(&iccex))
+    {
+      mTooltipWnd = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                                   CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, mPlugWnd, NULL, mHInstance, NULL);
+      if (mTooltipWnd)
+      {
+        SetWindowPos(mTooltipWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        TOOLINFOW ti = { TTTOOLINFOW_V2_SIZE, TTF_IDISHWND | TTF_SUBCLASS, mPlugWnd, (UINT_PTR) mPlugWnd, {0, 0, 0, 0}, NULL, NULL, 0, NULL };
+        SendMessageW(mTooltipWnd, TTM_ADDTOOLW, 0, (LPARAM) &ti);
+        SendMessageW(mTooltipWnd, TTM_SETMAXTIPWIDTH, 0, TOOLTIPWND_MAXWIDTH);
+      }
+    }
+    if (!mTooltipWnd)
+    {
+      EnableTooltips(false);
+      return;
+    }
+  }
+
+  mTooltipIdx = -1; // Rearm hover on the next mouse move, including the same control.
+  SendMessageW(mTooltipWnd, TTM_ACTIVATE, TRUE, 0);
+}
+
 void IGraphicsWin::SetTooltip(const char* tooltip)
 {
   UTF8AsUTF16 tipWide(tooltip);
@@ -1887,7 +1916,7 @@ void IGraphicsWin::SetTooltip(const char* tooltip)
 
 void IGraphicsWin::ShowTooltip()
 {
-  if (mTooltipIdx > -1)
+  if (TooltipsEnabled() && mTooltipWnd && mTooltipIdx > -1)
   {
     if (auto* pTooltipControl = GetControl(mTooltipIdx))
     {
