@@ -1602,6 +1602,7 @@ void IGraphics::EnableTooltips(bool enable)
 {
   mEnableTooltips = enable;
   if (enable) mEnableMouseOver = true;
+  UpdateTooltips();
 }
 
 void IGraphics::EnableLiveEdit(bool enable)
