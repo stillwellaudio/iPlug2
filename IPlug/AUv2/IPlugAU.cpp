@@ -97,14 +97,16 @@ inline bool IPlugAU::GetNumberFromDict(CFDictionaryRef pDict, const char* key, v
   return false;
 }
 
-inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value)
+inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value, size_t valueSize)
 {
   CFStrLocal cfKey(key);
   CFStringRef pValue = (CFStringRef) CFDictionaryGetValue(pDict, cfKey.Get());
   if (pValue)
   {
     CStrLocal cStr(pValue);
-    strcpy(value, cStr.Get());
+    // The string comes from host-supplied (possibly user-edited) data; never
+    // copy past the caller's buffer.
+    snprintf(value, valueSize, "%s", cStr.Get());
     return true;
   }
   value[0] = '\0';
@@ -1111,13 +1113,20 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
 {
   Trace(TRACELOC, "(%d:%s):(%d:%s):%d", propID, AUPropertyStr(propID), scope, AUScopeStr(scope), element);
 
-  InformListeners(propID, scope);
+  // A transactional state restore notifies ClassInfo listeners only after it
+  // succeeds, so a rejected restore changes nothing observable.
+  const bool notifyAfterRestore = propID == kAudioUnitProperty_ClassInfo && RestoresStateTransactionally();
+  if (!notifyAfterRestore)
+    InformListeners(propID, scope);
 
   switch (propID)
   {
     case kAudioUnitProperty_ClassInfo:                  // 0,
     {
-      return SetState(*((CFPropertyListRef*) pData));
+      const OSStatus result = SetState(*((CFPropertyListRef*) pData));
+      if (notifyAfterRestore && result == noErr)
+        InformListeners(propID, scope);
+      return result;
     }
     case kAudioUnitProperty_MakeConnection:              // 1,
     {
@@ -1235,7 +1244,14 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     {
       const bool bypassed = *((UInt32*) pData) != 0;
       SetBypassed(bypassed);
-      
+
+      // This property may be set while another thread renders. A plug-in that
+      // handles bypass internally keeps rendering and is notified on the render
+      // thread (see RenderProc); its DSP state must not be reset or
+      // reactivated from here.
+      if (HandlesHostBypassInternally())
+        return noErr;
+
       // TODO: should the following be called here?
       OnActivate(!bypassed);
       OnReset();
@@ -1484,7 +1500,7 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
       !GetNumberFromDict(pDict, kAUPresetTypeKey, &type, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetSubtypeKey, &subtype, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetManufacturerKey, &mfr, kCFNumberSInt32Type) ||
-      !GetStrFromDict(pDict, kAUPresetNameKey, presetName) ||
+      !GetStrFromDict(pDict, kAUPresetNameKey, presetName, sizeof(presetName)) ||
       //version != GetPluginVersion(false) ||
       type != GetAUPluginType() ||
       subtype != GetUniqueID() ||
@@ -1493,7 +1509,14 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
     return kAudioUnitErr_InvalidPropertyValue;
   }
   
-  RestorePreset(presetName);
+  // Legacy restore (default): restore the named factory preset, then apply the
+  // saved data, accepting a partial state. A plug-in that restores state
+  // transactionally instead gets the saved data applied first (no intermediate
+  // factory-preset values), the named preset recorded without applying its
+  // values, and rejected data reported (UnserializeState() < 0).
+  const bool transactional = RestoresStateTransactionally();
+  if (!transactional)
+    RestorePreset(presetName);
 
   IByteChunk chunk;
 
@@ -1505,10 +1528,31 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
   // TODO: IPlugVer should be in chunk!
   //  int pos;
   //  IByteChunk::GetIPlugVerFromChunk(chunk, pos)
-  
-  if (!UnserializeState(chunk, 0))
+
+  // The saved data must be exactly one valid state; validate it before
+  // publishing anything.
+  if (transactional && ValidateState(chunk, 0) != chunk.Size())
   {
     return kAudioUnitErr_InvalidPropertyValue;
+  }
+
+  const int restoredPosition = UnserializeState(chunk, 0);
+  if (transactional ? restoredPosition < 0 : restoredPosition == 0)
+  {
+    return kAudioUnitErr_InvalidPropertyValue;
+  }
+
+  if (transactional)
+  {
+    for (int idx = 0; idx < NPresets(); ++idx)
+    {
+      if (!strcmp(GetPresetName(idx), presetName))
+      {
+        SetCurrentPresetIdx(idx);
+        OnPresetsModified();
+        break;
+      }
+    }
   }
 
   OnRestoreState();
@@ -1741,7 +1785,19 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
       _this->SetChannelConnections(ERoute::kOutput, nConnected, totalNumChans - nConnected, false); // this will disconnect the channels that are on the unconnected buses
     }
 
-    if (_this->GetBypassed())
+    const bool bypassedInternally = _this->HandlesHostBypassInternally();
+    if (bypassedInternally)
+    {
+      // Same contract as AAX: edge notification on the processing thread.
+      const bool bypassed = _this->GetBypassed();
+      if (bypassed != _this->mHostBypassNotified)
+      {
+        _this->mHostBypassNotified = bypassed;
+        _this->OnHostBypassChanged(bypassed);
+      }
+    }
+
+    if (_this->GetBypassed() && !bypassedInternally)
     {
       _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
     }
@@ -2013,6 +2069,9 @@ void IPlugAU::InformListeners(AudioUnitPropertyID propID, AudioUnitScope scope)
 void IPlugAU::SetLatency(int samples)
 {
   TRACE
+  if (samples == GetLatency())
+    return; // unchanged: no property-listener notification
+
   InformListeners(kAudioUnitProperty_Latency, kAudioUnitScope_Global);
   IPlugProcessor::SetLatency(samples);
 }

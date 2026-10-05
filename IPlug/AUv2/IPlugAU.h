@@ -196,7 +196,7 @@ protected:
   static void PutStrInDict(CFMutableDictionaryRef pDict, const char* key, const char* value);
   static void PutDataInDict(CFMutableDictionaryRef pDict, const char* key, IByteChunk* pChunk);
   static bool GetNumberFromDict(CFDictionaryRef pDict, const char* key, void* pNumber, CFNumberType type);
-  static bool GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value);
+  static bool GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value, size_t valueSize);
   static bool GetDataFromDict(CFDictionaryRef pDict, const char* key, IByteChunk* pChunk);
 
 private:
@@ -205,6 +205,7 @@ private:
 
   bool mActive = false; // TODO: is this necessary? is it correct?
   double mLastRenderSampleTime = -1.0;
+  bool mHostBypassNotified = false; // render thread only
   WDL_String mCocoaViewFactoryClassName;
   AudioComponentInstance mCI = nullptr;
   HostCallbackInfo mHostCallbacks;

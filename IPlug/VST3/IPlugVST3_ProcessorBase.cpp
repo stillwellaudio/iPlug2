@@ -507,7 +507,9 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
     BitterVST3LogAudio(data, setup, NChannelsConnected(ERoute::kInput), NChannelsConnected(ERoute::kOutput), GetBypassed());
 #endif
     
-    if (GetBypassed())
+    // A plug-in that handles host bypass internally keeps processing and
+    // applies bypass itself (as in the AAX wrapper).
+    if (GetBypassed() && !mPlug.HandlesHostBypassInternally())
     {
       if (sampleSize == kSample32)
         PassThroughBuffers(0.f, data.numSamples); // single precision
@@ -534,6 +536,19 @@ void IPlugVST3ProcessorBase::Process(ProcessData& data, ProcessSetup& setup, con
 {
   PrepareProcessContext(data, setup);
   ProcessParameterChanges(data, fromProcessor);
+
+  // Same contract as AAX: plug-ins that handle bypass internally are notified
+  // of changes on the processing thread, whether the change arrived as
+  // bypass-parameter automation or from a restored state.
+  if (mPlug.HandlesHostBypassInternally())
+  {
+    const bool bypassed = GetBypassed();
+    if (bypassed != mHostBypassNotified)
+    {
+      mHostBypassNotified = bypassed;
+      mPlug.OnHostBypassChanged(bypassed);
+    }
+  }
   
   if (DoesMIDIIn())
   {

@@ -223,6 +223,9 @@ void IPlugVST2::UpdateEditRect()
 
 void IPlugVST2::SetLatency(int samples)
 {
+  if (samples == GetLatency() && samples == mAEffect.initialDelay)
+    return; // unchanged: no audioMasterIOChanged
+
   mAEffect.initialDelay = samples;
   IPlugProcessor::SetLatency(samples);
   mHostCallback(&mAEffect, audioMasterIOChanged, 0, 0, 0, 0.0f);
@@ -529,14 +532,24 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
         int iplugVer = IByteChunk::GetIPlugVerFromChunk(chunk, pos);
         isBank &= (iplugVer >= 0x010000);
 
+        const bool transactional = _this->RestoresStateTransactionally();
         if (isBank)
         {
+          // Transactional plug-ins validate the whole bank before changing any
+          // preset (IPluginBase::UnserializePresets()); it must end the chunk.
+          if (transactional && _this->ValidatePresets(chunk, pos) != chunk.Size())
+            return 0;
           pos = static_cast<IPluginBase*>(_this)->UnserializePresets(chunk, pos);
         }
         else
         {
+          // A transactional program chunk must be exactly one valid state; a
+          // rejected one leaves the parameters and the current preset unchanged.
+          if (transactional && _this->ValidateState(chunk, pos) != chunk.Size())
+            return 0;
           pos = _this->UnserializeState(chunk, pos);
-          _this->ModifyCurrentPreset();
+          if (!transactional || pos >= 0)
+            _this->ModifyCurrentPreset();
         }
 
         if (pos >= 0)

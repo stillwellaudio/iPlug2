@@ -36,6 +36,10 @@ class IPlugVST3ProcessorBase : public IPlugProcessor
 {
 public:
   IPlugVST3ProcessorBase(Config c, IPlugAPIBase& plug);
+
+  /** Apply a host bypass state restored by setState(). Plug-ins that handle
+   * bypass internally are notified on the next processing call. */
+  void RestoreHostBypass(bool bypassed) { SetBypassed(bypassed); }
   
   template <class T>
   void Initialize(T* pPlug)
@@ -197,6 +201,7 @@ private:
   Steinberg::Vst::ProcessContext mProcessContext;
   IMidiQueue mMidiOutputQueue;
   bool mSidechainActive = false;
+  bool mHostBypassNotified = false; // processing thread only
 };
 
 END_IPLUG_NAMESPACE

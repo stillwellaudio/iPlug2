@@ -151,6 +151,32 @@ public:
    * @param startPos The position in the chunk where the data starts
    * @return The new chunk position (endPos)*/
   virtual int UnserializeState(const IByteChunk& chunk, int startPos) { TRACE return UnserializeParams(chunk, startPos); }
+
+  /** Return true to restore state transactionally. Such a plug-in's
+   * UnserializeState() must reject (return a negative position) without
+   * publishing anything, and ValidateState() must accept exactly the states
+   * UnserializeState() would. The wrappers then validate the complete format
+   * envelope (exact data size, trailing format fields such as the VST3 bypass
+   * flag, every preset of a bank) before publishing any of it, and report
+   * rejection without changing parameters, presets, bypass or notifying.
+   * The default keeps the legacy behavior, which applies a valid prefix and
+   * accepts a partial state (for example a shorter state saved by an older
+   * version), and on AUv2 restores the named factory preset first. */
+  virtual bool RestoresStateTransactionally() const { return false; }
+
+  /** Validate a state without publishing any of it. Returns the position after
+   * the state, or -1 if UnserializeState() would reject it. The default accepts
+   * the default parameter-only layout written by SerializeParams(): NParams()
+   * finite doubles. Only used for plug-ins that restore transactionally.
+   * @param chunk The incoming chunk containing the state data
+   * @param startPos The position in the chunk where the data starts
+   * @return The end position, or -1 */
+  virtual int ValidateState(const IByteChunk& chunk, int startPos) const;
+
+  /** Validate a bank written by SerializePresets() without changing anything.
+   * Returns the end position, or -1 for a malformed name, initialized flag or
+   * preset state (see ValidateState()). */
+  int ValidatePresets(const IByteChunk& chunk, int startPos) const;
   
   /** VST3 ONLY! - THIS IS ONLY INCLUDED FOR COMPATIBILITY - NOONE ELSE SHOULD NEED IT!
    * @param chunk The output bytechunk where data can be serialized.

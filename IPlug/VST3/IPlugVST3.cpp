@@ -248,6 +248,12 @@ void IPlugVST3::SendParameterValueFromUI(int paramIdx, double normalisedValue)
 
 void IPlugVST3::SetLatency(int latency)
 {
+  // An unchanged latency needs no restart; restartComponent is a UI-thread
+  // call and SetLatency is commonly reached from reset paths that a host may
+  // invoke on the processing thread (setProcessing).
+  if (latency == GetLatency())
+    return;
+
   // N.B. set the latency even if the handler is not yet set
   
   IPlugProcessor::SetLatency(latency);
