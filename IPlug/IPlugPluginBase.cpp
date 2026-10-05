@@ -567,10 +567,12 @@ int IPluginBase::UnserializePresets(const IByteChunk& chunk, int startPos)
       uint8_t initialized = 0;
       pos = chunk.Get(&initialized, pos);
       pPreset->mInitialized = initialized != 0;
+      // An uninitialized entry must not keep its previous data: RestorePreset()
+      // initializes it by appending the current state to mChunk.
+      pPreset->mChunk.Clear();
       if (pPreset->mInitialized)
       {
         const int stateEnd = ValidateState(chunk, pos);
-        pPreset->mChunk.Clear();
         pPreset->mChunk.PutBytes(chunk.GetData() + pos, stateEnd - pos);
         pos = stateEnd;
       }
