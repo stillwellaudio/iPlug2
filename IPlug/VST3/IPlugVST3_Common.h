@@ -66,6 +66,30 @@ struct IPlugVST3State
       
       chunk.PutBytes(buffer, bytesRead);
     }
+
+    if (pPlug->RestoresStateTransactionally())
+    {
+      // The format envelope is [state][int32 bypass], exactly as GetState()
+      // writes it (every iPlug2 VST3 state carries the bypass flag). Validate
+      // all of it before publishing anything.
+      const int end = pPlug->ValidateState(chunk, 0);
+      Steinberg::int32 savedBypass = -1;
+      if (end < 0 || chunk.Size() - end != (int) sizeof(Steinberg::int32)
+          || chunk.Get(&savedBypass, end) < 0 || (savedBypass != 0 && savedBypass != 1))
+        return false;
+
+      if (pPlug->UnserializeState(chunk, 0) != end)
+        return false; // ValidateState() and UnserializeState() disagree
+
+      IPlugVST3ControllerBase* pController = dynamic_cast<IPlugVST3ControllerBase*>(pPlug);
+
+      if (pController)
+        pController->UpdateParams(pPlug, savedBypass);
+
+      pPlug->OnRestoreState();
+      return true;
+    }
+
     int pos = pPlug->UnserializeState(chunk,0);
     if (pos < 0)
       return false;

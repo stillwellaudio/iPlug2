@@ -474,6 +474,11 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
 
   if (bytesRead != 0 || chunk.Size() == 0)
     return false;
+
+  // A transactional plug-in's state must occupy the stream exactly; validate
+  // before publishing so a rejected load changes nothing.
+  if (RestoresStateTransactionally() && ValidateState(chunk, 0) != chunk.Size())
+    return false;
       
   const int restoredPosition = UnserializeState(chunk, 0);
   const bool restoredOK = restoredPosition >= 0 && restoredPosition == chunk.Size();

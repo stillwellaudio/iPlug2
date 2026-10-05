@@ -1520,6 +1520,13 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
   //  int pos;
   //  IByteChunk::GetIPlugVerFromChunk(chunk, pos)
 
+  // The saved data must be exactly one valid state; validate it before
+  // publishing anything.
+  if (transactional && ValidateState(chunk, 0) != chunk.Size())
+  {
+    return kAudioUnitErr_InvalidPropertyValue;
+  }
+
   const int restoredPosition = UnserializeState(chunk, 0);
   if (transactional ? restoredPosition < 0 : restoredPosition == 0)
   {

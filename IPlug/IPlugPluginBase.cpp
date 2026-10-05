@@ -17,6 +17,8 @@
 #include "wdlendian.h"
 #include "wdl_base64.h"
 
+#include <cmath>
+
 using namespace iplug;
 
 IPluginBase::IPluginBase(int nParams, int nPresets)
@@ -512,9 +514,71 @@ bool IPluginBase::SerializePresets(IByteChunk& chunk) const
   return savedOK;
 }
 
+int IPluginBase::ValidateState(const IByteChunk& chunk, int startPos) const
+{
+  int pos = startPos;
+  for (int i = 0; i < NParams() && pos >= 0; ++i)
+  {
+    double v = 0.0;
+    pos = chunk.Get(&v, pos);
+    if (pos >= 0 && !std::isfinite(v))
+      pos = -1;
+  }
+  return pos;
+}
+
+int IPluginBase::ValidatePresets(const IByteChunk& chunk, int startPos) const
+{
+  int pos = startPos;
+  for (int i = 0; i < mPresets.GetSize() && pos >= 0; ++i)
+  {
+    int length = 0;
+    const int nameStart = chunk.Get(&length, pos);
+    if (nameStart < 0 || length < 0 || length >= MAX_PRESET_NAME_LEN || length > chunk.Size() - nameStart)
+      return -1;
+    pos = nameStart + length;
+    uint8_t initialized = 0;
+    pos = chunk.Get(&initialized, pos);
+    if (pos < 0 || initialized > 1)
+      return -1;
+    if (initialized)
+      pos = ValidateState(chunk, pos);
+  }
+  return pos;
+}
+
 int IPluginBase::UnserializePresets(const IByteChunk& chunk, int startPos)
 {
   TRACE
+  if (RestoresStateTransactionally())
+  {
+    // Validate the whole bank first; on success install each preset's data
+    // without publishing intermediate presets, then restore the current one.
+    const int end = ValidatePresets(chunk, startPos);
+    if (end < 0)
+      return -1;
+    WDL_String name;
+    int pos = startPos;
+    for (int i = 0; i < mPresets.GetSize(); ++i)
+    {
+      IPreset* pPreset = mPresets.Get(i);
+      pos = chunk.GetStr(name, pos);
+      snprintf(pPreset->mName, MAX_PRESET_NAME_LEN, "%s", name.Get());
+      uint8_t initialized = 0;
+      pos = chunk.Get(&initialized, pos);
+      pPreset->mInitialized = initialized != 0;
+      if (pPreset->mInitialized)
+      {
+        const int stateEnd = ValidateState(chunk, pos);
+        pPreset->mChunk.Clear();
+        pPreset->mChunk.PutBytes(chunk.GetData() + pos, stateEnd - pos);
+        pos = stateEnd;
+      }
+    }
+    RestorePreset(mCurrentPresetIdx);
+    return end;
+  }
+
   WDL_String name;
   int n = mPresets.GetSize(), pos = startPos;
   for (int i = 0; i < n && pos >= 0; ++i)

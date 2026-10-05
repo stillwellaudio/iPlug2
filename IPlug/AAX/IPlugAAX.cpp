@@ -705,7 +705,16 @@ AAX_Result IPlugAAX::SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* pChun
     chunk.PutBytes(pChunk->fData, pChunk->fSize);
     int pos = 0;
     //IByteChunk::GetIPlugVerFromChunk(chunk, pos); // TODO: IPlugVer should be in chunk!
+
+    // A transactional plug-in's chunk must be exactly one valid state. Reject
+    // it before publishing, parameter resynchronization, notification or
+    // change bookkeeping, and report the rejection to the host.
+    if (RestoresStateTransactionally() && ValidateState(chunk, pos) != chunk.Size())
+      return AAX_ERROR_MALFORMED_CHUNK;
+
     pos = UnserializeState(chunk, pos);
+    if (RestoresStateTransactionally() && pos < 0)
+      return AAX_ERROR_MALFORMED_CHUNK;
     
     for (int i = 0; i< NParams(); i++)
       SetParameterNormalizedValue(mParamIDs.Get(i)->Get(), GetParam(i)->GetNormalized());
