@@ -406,12 +406,7 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
               const bool bypassed = (value > 0.5);
 
               if (bypassed != GetBypassed())
-              {
                 SetBypassed(bypassed);
-                // Same contract as AAX: edge notification on the processing thread.
-                if (mPlug.HandlesHostBypassInternally())
-                  mPlug.OnHostBypassChanged(bypassed);
-              }
 
               break;
             }
@@ -541,6 +536,19 @@ void IPlugVST3ProcessorBase::Process(ProcessData& data, ProcessSetup& setup, con
 {
   PrepareProcessContext(data, setup);
   ProcessParameterChanges(data, fromProcessor);
+
+  // Same contract as AAX: plug-ins that handle bypass internally are notified
+  // of changes on the processing thread, whether the change arrived as
+  // bypass-parameter automation or from a restored state.
+  if (mPlug.HandlesHostBypassInternally())
+  {
+    const bool bypassed = GetBypassed();
+    if (bypassed != mHostBypassNotified)
+    {
+      mHostBypassNotified = bypassed;
+      mPlug.OnHostBypassChanged(bypassed);
+    }
+  }
   
   if (DoesMIDIIn())
   {

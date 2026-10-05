@@ -81,6 +81,11 @@ struct IPlugVST3State
       if (pPlug->UnserializeState(chunk, 0) != end)
         return false; // ValidateState() and UnserializeState() disagree
 
+      // Restore the processor's bypass with the controller's. The plug-in is
+      // notified of the change on the processing thread (see
+      // IPlugVST3ProcessorBase::Process()).
+      pPlug->RestoreHostBypass(savedBypass != 0);
+
       IPlugVST3ControllerBase* pController = dynamic_cast<IPlugVST3ControllerBase*>(pPlug);
 
       if (pController)
