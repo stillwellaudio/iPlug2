@@ -97,14 +97,16 @@ inline bool IPlugAU::GetNumberFromDict(CFDictionaryRef pDict, const char* key, v
   return false;
 }
 
-inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value)
+inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value, size_t valueSize)
 {
   CFStrLocal cfKey(key);
   CFStringRef pValue = (CFStringRef) CFDictionaryGetValue(pDict, cfKey.Get());
   if (pValue)
   {
     CStrLocal cStr(pValue);
-    strcpy(value, cStr.Get());
+    // The string comes from host-supplied (possibly user-edited) data; never
+    // copy past the caller's buffer.
+    snprintf(value, valueSize, "%s", cStr.Get());
     return true;
   }
   value[0] = '\0';
@@ -1491,7 +1493,7 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
       !GetNumberFromDict(pDict, kAUPresetTypeKey, &type, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetSubtypeKey, &subtype, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetManufacturerKey, &mfr, kCFNumberSInt32Type) ||
-      !GetStrFromDict(pDict, kAUPresetNameKey, presetName) ||
+      !GetStrFromDict(pDict, kAUPresetNameKey, presetName, sizeof(presetName)) ||
       //version != GetPluginVersion(false) ||
       type != GetAUPluginType() ||
       subtype != GetUniqueID() ||
