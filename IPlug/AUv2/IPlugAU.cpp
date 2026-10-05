@@ -1113,13 +1113,20 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
 {
   Trace(TRACELOC, "(%d:%s):(%d:%s):%d", propID, AUPropertyStr(propID), scope, AUScopeStr(scope), element);
 
-  InformListeners(propID, scope);
+  // A transactional state restore notifies ClassInfo listeners only after it
+  // succeeds, so a rejected restore changes nothing observable.
+  const bool notifyAfterRestore = propID == kAudioUnitProperty_ClassInfo && RestoresStateTransactionally();
+  if (!notifyAfterRestore)
+    InformListeners(propID, scope);
 
   switch (propID)
   {
     case kAudioUnitProperty_ClassInfo:                  // 0,
     {
-      return SetState(*((CFPropertyListRef*) pData));
+      const OSStatus result = SetState(*((CFPropertyListRef*) pData));
+      if (notifyAfterRestore && result == noErr)
+        InformListeners(propID, scope);
+      return result;
     }
     case kAudioUnitProperty_MakeConnection:              // 1,
     {
