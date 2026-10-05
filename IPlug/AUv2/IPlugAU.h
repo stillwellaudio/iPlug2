@@ -205,6 +205,7 @@ private:
 
   bool mActive = false; // TODO: is this necessary? is it correct?
   double mLastRenderSampleTime = -1.0;
+  bool mHostBypassNotified = false; // render thread only
   WDL_String mCocoaViewFactoryClassName;
   AudioComponentInstance mCI = nullptr;
   HostCallbackInfo mHostCallbacks;

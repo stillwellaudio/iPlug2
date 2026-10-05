@@ -1235,7 +1235,14 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     {
       const bool bypassed = *((UInt32*) pData) != 0;
       SetBypassed(bypassed);
-      
+
+      // This property may be set while another thread renders. A plug-in that
+      // handles bypass internally keeps rendering and is notified on the render
+      // thread (see RenderProc); its DSP state must not be reset or
+      // reactivated from here.
+      if (HandlesHostBypassInternally())
+        return noErr;
+
       // TODO: should the following be called here?
       OnActivate(!bypassed);
       OnReset();
@@ -1741,7 +1748,19 @@ OSStatus IPlugAU::RenderProc(void* pPlug, AudioUnitRenderActionFlags* pFlags, co
       _this->SetChannelConnections(ERoute::kOutput, nConnected, totalNumChans - nConnected, false); // this will disconnect the channels that are on the unconnected buses
     }
 
-    if (_this->GetBypassed())
+    const bool bypassedInternally = _this->HandlesHostBypassInternally();
+    if (bypassedInternally)
+    {
+      // Same contract as AAX: edge notification on the processing thread.
+      const bool bypassed = _this->GetBypassed();
+      if (bypassed != _this->mHostBypassNotified)
+      {
+        _this->mHostBypassNotified = bypassed;
+        _this->OnHostBypassChanged(bypassed);
+      }
+    }
+
+    if (_this->GetBypassed() && !bypassedInternally)
     {
       _this->PassThroughBuffers((AudioSampleType) 0, nFrames);
     }

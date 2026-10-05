@@ -406,7 +406,12 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
               const bool bypassed = (value > 0.5);
 
               if (bypassed != GetBypassed())
+              {
                 SetBypassed(bypassed);
+                // Same contract as AAX: edge notification on the processing thread.
+                if (mPlug.HandlesHostBypassInternally())
+                  mPlug.OnHostBypassChanged(bypassed);
+              }
 
               break;
             }
@@ -507,7 +512,9 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
     BitterVST3LogAudio(data, setup, NChannelsConnected(ERoute::kInput), NChannelsConnected(ERoute::kOutput), GetBypassed());
 #endif
     
-    if (GetBypassed())
+    // A plug-in that handles host bypass internally keeps processing and
+    // applies bypass itself (as in the AAX wrapper).
+    if (GetBypassed() && !mPlug.HandlesHostBypassInternally())
     {
       if (sampleSize == kSample32)
         PassThroughBuffers(0.f, data.numSamples); // single precision
