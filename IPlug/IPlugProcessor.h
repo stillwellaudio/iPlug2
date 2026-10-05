@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cassert>
 #include <limits>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -129,7 +130,7 @@ public:
   bool GetTailIsInfinite() const { return GetTailSize() == kTailInfinite; }
     
   /** @return \c true if the plugin is currently bypassed */
-  bool GetBypassed() const { return mBypassed; }
+  bool GetBypassed() const { return mBypassed.load(std::memory_order_relaxed); }
 
   /** @return \c true if the plugin is currently rendering off-line */
   bool GetRenderingOffline() const { return mRenderingOffline; };
@@ -289,7 +290,7 @@ protected:
   void ZeroScratchBuffers();
   void SetSampleRate(double sampleRate) { mSampleRate = sampleRate; }
   void SetBlockSize(int blockSize);
-  void SetBypassed(bool bypassed) { mBypassed = bypassed; }
+  void SetBypassed(bool bypassed) { mBypassed.store(bypassed, std::memory_order_relaxed); }
   void SetTimeInfo(const ITimeInfo& timeInfo) { mTimeInfo = timeInfo; }
   void SetRenderingOffline(bool renderingOffline) { mRenderingOffline = renderingOffline; }
   const WDL_String& GetChannelLabel(ERoute direction, int idx) { return mChannelData[direction].Get(idx)->mLabel; }
@@ -313,7 +314,9 @@ private:
   /** Current tail size (in samples) */
   int mTailSize = 0;
   /** \c true if the plug-in is bypassed */
-  bool mBypassed = false;
+  /** Host bypass state. AUv2 sets it from the property thread while the render
+   * thread reads it; it carries no other data, so relaxed ordering suffices. */
+  std::atomic<bool> mBypassed {false};
   /** \c true if the plug-in is rendering off-line*/
   bool mRenderingOffline = false;
   /** A list of IOConfig structures populated by ParseChannelIOStr in the IPlugProcessor constructor */
