@@ -151,6 +151,14 @@ public:
    * @param startPos The position in the chunk where the data starts
    * @return The new chunk position (endPos)*/
   virtual int UnserializeState(const IByteChunk& chunk, int startPos) { TRACE return UnserializeParams(chunk, startPos); }
+
+  /** Return true if UnserializeState() validates the complete state before
+   * publishing any of it and reports rejection with a negative position. AUv2
+   * then applies saved data before recording the named preset as current, and
+   * reports rejected data as an error. The default keeps the legacy AUv2 restore,
+   * which restores the named factory preset first and accepts a partial state
+   * (for example a shorter state saved by an older version). */
+  virtual bool RestoresStateTransactionally() const { return false; }
   
   /** VST3 ONLY! - THIS IS ONLY INCLUDED FOR COMPATIBILITY - NOONE ELSE SHOULD NEED IT!
    * @param chunk The output bytechunk where data can be serialized.

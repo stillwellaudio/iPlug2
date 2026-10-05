@@ -1500,7 +1500,14 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
     return kAudioUnitErr_InvalidPropertyValue;
   }
   
-  RestorePreset(presetName);
+  // Legacy restore (default): restore the named factory preset, then apply the
+  // saved data, accepting a partial state. A plug-in that restores state
+  // transactionally instead gets the saved data applied first (no intermediate
+  // factory-preset values), the named preset recorded without applying its
+  // values, and rejected data reported (UnserializeState() < 0).
+  const bool transactional = RestoresStateTransactionally();
+  if (!transactional)
+    RestorePreset(presetName);
 
   IByteChunk chunk;
 
@@ -1512,10 +1519,24 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
   // TODO: IPlugVer should be in chunk!
   //  int pos;
   //  IByteChunk::GetIPlugVerFromChunk(chunk, pos)
-  
-  if (!UnserializeState(chunk, 0))
+
+  const int restoredPosition = UnserializeState(chunk, 0);
+  if (transactional ? restoredPosition < 0 : restoredPosition == 0)
   {
     return kAudioUnitErr_InvalidPropertyValue;
+  }
+
+  if (transactional)
+  {
+    for (int idx = 0; idx < NPresets(); ++idx)
+    {
+      if (!strcmp(GetPresetName(idx), presetName))
+      {
+        SetCurrentPresetIdx(idx);
+        OnPresetsModified();
+        break;
+      }
+    }
   }
 
   OnRestoreState();
