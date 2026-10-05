@@ -223,6 +223,9 @@ void IPlugVST2::UpdateEditRect()
 
 void IPlugVST2::SetLatency(int samples)
 {
+  if (samples == GetLatency() && samples == mAEffect.initialDelay)
+    return; // unchanged: no audioMasterIOChanged
+
   mAEffect.initialDelay = samples;
   IPlugProcessor::SetLatency(samples);
   mHostCallback(&mAEffect, audioMasterIOChanged, 0, 0, 0, 0.0f);

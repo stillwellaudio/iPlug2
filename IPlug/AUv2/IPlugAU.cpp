@@ -2032,6 +2032,9 @@ void IPlugAU::InformListeners(AudioUnitPropertyID propID, AudioUnitScope scope)
 void IPlugAU::SetLatency(int samples)
 {
   TRACE
+  if (samples == GetLatency())
+    return; // unchanged: no property-listener notification
+
   InformListeners(kAudioUnitProperty_Latency, kAudioUnitScope_Global);
   IPlugProcessor::SetLatency(samples);
 }
