@@ -195,6 +195,16 @@ void IControl::SetValueToDefault(int valIdx)
   SetDirty(true, valIdx);
 }
 
+IControl* IControl::SetTooltip(const char* str)
+{
+  const bool hadTooltip = CStringHasContents(mTooltip.Get());
+  mTooltip.Set(str);
+  // Platforms register tooltip regions only for controls with text.
+  if (mGraphics && hadTooltip != CStringHasContents(mTooltip.Get()))
+    mGraphics->UpdateTooltips();
+  return this;
+}
+
 void IControl::SetDirty(bool triggerAction, int valIdx)
 {
   valIdx = (NVals() == 1) ? 0 : valIdx;
