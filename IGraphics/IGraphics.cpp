@@ -117,6 +117,9 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   
   if(mLayoutOnResize)
     GetDelegate()->LayoutUI(this);
+
+  // Control bounds are final only after OnResize() and LayoutUI(); PlatformResize() ran before them.
+  UpdateTooltips();
 }
 
 void IGraphics::SetLayoutOnResize(bool layoutOnResize)

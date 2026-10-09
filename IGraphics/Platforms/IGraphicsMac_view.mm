@@ -1260,14 +1260,19 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
   // AppKit asks once, where the cursor enters a tooltip rect, and keeps the answer while the
   // cursor stays in it, so answer for the control that owns the rect rather than the control
-  // under the entry point. The control may have been removed since the rects were built.
+  // under the entry point. The control may have been removed, or moved away from this rect,
+  // since the rects were built.
+  const float x = point.x / mGraphics->GetDrawScale();
+  const float y = point.y / mGraphics->GetDrawScale();
+
   for (int c = 0; c < mGraphics->NControls(); ++c)
   {
     IControl* pControl = mGraphics->GetControl(c);
     if (pControl == pData)
     {
       const char* tooltip = pControl->GetTooltip();
-      return !pControl->IsHidden() && CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+      const bool inPlace = pControl->GetTargetRECT().GetPadded(1.f).Contains(x, y);
+      return inPlace && !pControl->IsHidden() && CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
     }
   }
 
