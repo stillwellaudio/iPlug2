@@ -1265,18 +1265,37 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
   const float x = point.x / mGraphics->GetDrawScale();
   const float y = point.y / mGraphics->GetDrawScale();
 
+  int owner = -1;
   for (int c = 0; c < mGraphics->NControls(); ++c)
   {
-    IControl* pControl = mGraphics->GetControl(c);
-    if (pControl == pData)
+    if (mGraphics->GetControl(c) == pData)
     {
-      const char* tooltip = pControl->GetTooltip();
-      const bool inPlace = pControl->GetTargetRECT().GetPadded(1.f).Contains(x, y);
-      return inPlace && !pControl->IsHidden() && CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+      owner = c;
+      break;
     }
   }
+  if (owner < 0)
+    return @"";
 
-  return @"";
+  IControl* pOwner = mGraphics->GetControl(owner);
+  const char* tooltip = pOwner->GetTooltip();
+  if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !pOwner->GetTargetRECT().GetPadded(1.f).Contains(x, y))
+    return @"";
+
+  // A control above the owner that takes the mouse here (as for mouse-over) hides the tooltip,
+  // whether or not it has one; rects are registered only for controls with tooltip text.
+  for (int c = mGraphics->NControls() - 1; c > owner; --c)
+  {
+    IControl* pControl = mGraphics->GetControl(c);
+    if (pControl->IsHidden() || pControl->GetIgnoreMouse())
+      continue;
+    if (pControl->IsDisabled() && !pControl->GetMouseOverWhenDisabled())
+      continue;
+    if (pControl->IsHit(x, y))
+      return @"";
+  }
+
+  return [NSString stringWithUTF8String:tooltip];
 }
 
 - (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl
