@@ -405,12 +405,12 @@ void IGraphicsMac::UpdateTooltips()
 
   auto func = [this](IControl* pControl)
   {
-    if (pControl->GetTooltip() && !pControl->IsHidden())
+    if (CStringHasContents(pControl->GetTooltip()) && !pControl->IsHidden())
     {
       IRECT pR = pControl->GetTargetRECT();
       if (!pR.Empty())
       {
-        [(IGRAPHICS_VIEW*) mView registerToolTip: pR];
+        [(IGRAPHICS_VIEW*) mView registerToolTip: pR owner: pControl];
       }
     }
   };

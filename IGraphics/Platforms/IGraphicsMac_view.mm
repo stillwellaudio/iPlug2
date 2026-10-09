@@ -1258,31 +1258,25 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
   if (!mGraphics || !mGraphics->TooltipsEnabled())
     return @"";
 
-  // Resolve the control at the queried point as mouse-over would. The mouse-over index can still
-  // name the previous control when AppKit moves an open tooltip into an adjacent rect.
-  const float x = point.x / mGraphics->GetDrawScale();
-  const float y = point.y / mGraphics->GetDrawScale();
-
-  for (int c = mGraphics->NControls() - 1; c >= 1; --c)
+  // AppKit asks once, where the cursor enters a tooltip rect, and keeps the answer while the
+  // cursor stays in it, so answer for the control that owns the rect rather than the control
+  // under the entry point. The control may have been removed since the rects were built.
+  for (int c = 0; c < mGraphics->NControls(); ++c)
   {
     IControl* pControl = mGraphics->GetControl(c);
-    if (pControl->IsHidden() || pControl->GetIgnoreMouse())
-      continue;
-    if (pControl->IsDisabled() && !pControl->GetMouseOverWhenDisabled())
-      continue;
-    if (pControl->IsHit(x, y))
+    if (pControl == pData)
     {
       const char* tooltip = pControl->GetTooltip();
-      return CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+      return !pControl->IsHidden() && CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
     }
   }
 
   return @"";
 }
 
-- (void) registerToolTip: (IRECT&) bounds
+- (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl
 {
-  [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: nil];
+  [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: pControl];
 }
 
 - (NSDragOperation) draggingEntered: (id<NSDraggingInfo>) sender
