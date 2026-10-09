@@ -1458,6 +1458,10 @@ public:
   
   /** @return Pointer to the special pop-up menu control, if one has been attached */
   IPopupMenuControl* GetPopupMenuControl() { return mPopupControl.get(); }
+
+  /** @return true if a control outside the control stack (expanded popup, text entry, live edit,
+   * corner resizer or performance display) takes the mouse at x, y ahead of the stack */
+  bool AuxiliaryControlTakesMouse(float x, float y) const;
   
   /** @return Pointer to the special text entry control, if one has been attached */
   ITextEntryControl* GetTextEntryControl() { return mTextEntryControl.get(); }

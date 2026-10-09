@@ -1291,6 +1291,9 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
   // A control above the owner that takes the mouse here (as for mouse-over) hides the tooltip,
   // whether or not it has one; rects are registered only for controls with tooltip text.
+  if (mGraphics->AuxiliaryControlTakesMouse(x, y))
+    return @"";
+
   for (int c = mGraphics->NControls() - 1; c > owner; --c)
   {
     IControl* pControl = mGraphics->GetControl(c);
