@@ -1255,11 +1255,29 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData
 {
-  int c = mGraphics && mGraphics->TooltipsEnabled() ? GetMouseOver(mGraphics) : -1;
-  if (c < 0) return @"";
+  if (!mGraphics || !mGraphics->TooltipsEnabled())
+    return @"";
 
-  const char* tooltip = mGraphics->GetControl(c)->GetTooltip();
-  return CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+  // Resolve the control at the queried point as mouse-over would. The mouse-over index can still
+  // name the previous control when AppKit moves an open tooltip into an adjacent rect.
+  const float x = point.x / mGraphics->GetDrawScale();
+  const float y = point.y / mGraphics->GetDrawScale();
+
+  for (int c = mGraphics->NControls() - 1; c >= 1; --c)
+  {
+    IControl* pControl = mGraphics->GetControl(c);
+    if (pControl->IsHidden() || pControl->GetIgnoreMouse())
+      continue;
+    if (pControl->IsDisabled() && !pControl->GetMouseOverWhenDisabled())
+      continue;
+    if (pControl->IsHit(x, y))
+    {
+      const char* tooltip = pControl->GetTooltip();
+      return CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+    }
+  }
+
+  return @"";
 }
 
 - (void) registerToolTip: (IRECT&) bounds

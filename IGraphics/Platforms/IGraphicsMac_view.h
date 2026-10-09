@@ -52,11 +52,6 @@ inline IColor FromNSColor(const NSColor* c)
   return IColor(c.alphaComponent * 255., c.redComponent* 255., c.greenComponent * 255., c.blueComponent * 255.);
 }
 
-inline int GetMouseOver(IGraphicsMac* pGraphics)
-{
-  return pGraphics->GetMouseOver();
-}
-
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE
 
