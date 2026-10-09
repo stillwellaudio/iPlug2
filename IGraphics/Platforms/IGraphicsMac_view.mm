@@ -1281,6 +1281,11 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
   const char* tooltip = pOwner->GetTooltip();
   if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !pOwner->GetTargetRECT().GetPadded(1.f).Contains(x, y))
     return @"";
+  // Mouse-over would never pick this control. IsHit() is not applied to the owner: AppKit asks
+  // only at the entry point, and a target rect corner outside a round hit area would leave the
+  // control without a tooltip for the whole visit.
+  if (pOwner->GetIgnoreMouse() || (pOwner->IsDisabled() && !pOwner->GetMouseOverWhenDisabled()))
+    return @"";
 
   // A control above the owner that takes the mouse here (as for mouse-over) hides the tooltip,
   // whether or not it has one; rects are registered only for controls with tooltip text.
