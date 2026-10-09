@@ -1279,7 +1279,9 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
   IControl* pOwner = mGraphics->GetControl(owner);
   const char* tooltip = pOwner->GetTooltip();
-  if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !pOwner->GetTargetRECT().GetPadded(1.f).Contains(x, y))
+  // Compare in view pixels with the rect as registered (ToNSRect rounds outward), plus a pixel.
+  const NSRect registered = NSInsetRect(ToNSRect(mGraphics, pOwner->GetTargetRECT()), -1., -1.);
+  if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !NSPointInRect(point, registered))
     return @"";
   // Mouse-over would never pick this control. IsHit() is not applied to the owner: AppKit asks
   // only at the entry point, and a target rect corner outside a round hit area would leave the
