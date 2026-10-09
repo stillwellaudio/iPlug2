@@ -97,7 +97,6 @@ private:
   void* mView = nullptr;
   CGPoint mCursorLockPosition;
   WDL_String mBundleID, mAppGroupID;
-  friend int GetMouseOver(IGraphicsMac* pGraphics);
 };
 
 END_IGRAPHICS_NAMESPACE

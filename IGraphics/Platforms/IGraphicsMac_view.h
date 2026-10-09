@@ -52,11 +52,6 @@ inline IColor FromNSColor(const NSColor* c)
   return IColor(c.alphaComponent * 255., c.redComponent* 255., c.greenComponent * 255., c.blueComponent * 255.);
 }
 
-inline int GetMouseOver(IGraphicsMac* pGraphics)
-{
-  return pGraphics->GetMouseOver();
-}
-
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE
 
@@ -174,7 +169,7 @@ using namespace igraphics;
 
 //tooltip
 - (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData;
-- (void) registerToolTip: (IRECT&) bounds;
+- (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl;
 //drag-and-drop
 - (NSDragOperation) draggingEntered: (id <NSDraggingInfo>) sender;
 - (BOOL) performDragOperation: (id<NSDraggingInfo>) sender;

@@ -1255,16 +1255,62 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData
 {
-  int c = mGraphics && mGraphics->TooltipsEnabled() ? GetMouseOver(mGraphics) : -1;
-  if (c < 0) return @"";
+  if (!mGraphics || !mGraphics->TooltipsEnabled())
+    return @"";
 
-  const char* tooltip = mGraphics->GetControl(c)->GetTooltip();
-  return CStringHasContents(tooltip) ? [NSString stringWithUTF8String:tooltip] : @"";
+  // AppKit asks once, where the cursor enters a tooltip rect, and keeps the answer while the
+  // cursor stays in it, so answer for the control that owns the rect rather than the control
+  // under the entry point. The control may have been removed, or moved away from this rect,
+  // since the rects were built.
+  const float x = point.x / mGraphics->GetDrawScale();
+  const float y = point.y / mGraphics->GetDrawScale();
+
+  int owner = -1;
+  for (int c = 0; c < mGraphics->NControls(); ++c)
+  {
+    if (mGraphics->GetControl(c) == pData)
+    {
+      owner = c;
+      break;
+    }
+  }
+  if (owner < 0)
+    return @"";
+
+  IControl* pOwner = mGraphics->GetControl(owner);
+  const char* tooltip = pOwner->GetTooltip();
+  // Compare in view pixels with the rect as registered (ToNSRect rounds outward), plus a pixel.
+  const NSRect registered = NSInsetRect(ToNSRect(mGraphics, pOwner->GetTargetRECT()), -1., -1.);
+  if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !NSPointInRect(point, registered))
+    return @"";
+  // Mouse-over would never pick this control. IsHit() is not applied to the owner: AppKit asks
+  // only at the entry point, and a target rect corner outside a round hit area would leave the
+  // control without a tooltip for the whole visit.
+  if (pOwner->GetIgnoreMouse() || (pOwner->IsDisabled() && !pOwner->GetMouseOverWhenDisabled()))
+    return @"";
+
+  // A control above the owner that takes the mouse here (as for mouse-over) hides the tooltip,
+  // whether or not it has one; rects are registered only for controls with tooltip text.
+  if (mGraphics->AuxiliaryControlTakesMouse(x, y))
+    return @"";
+
+  for (int c = mGraphics->NControls() - 1; c > owner; --c)
+  {
+    IControl* pControl = mGraphics->GetControl(c);
+    if (pControl->IsHidden() || pControl->GetIgnoreMouse())
+      continue;
+    if (pControl->IsDisabled() && !pControl->GetMouseOverWhenDisabled())
+      continue;
+    if (pControl->IsHit(x, y))
+      return @"";
+  }
+
+  return [NSString stringWithUTF8String:tooltip];
 }
 
-- (void) registerToolTip: (IRECT&) bounds
+- (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl
 {
-  [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: nil];
+  [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: pControl];
 }
 
 - (NSDragOperation) draggingEntered: (id<NSDraggingInfo>) sender

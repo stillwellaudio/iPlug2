@@ -117,6 +117,9 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   
   if(mLayoutOnResize)
     GetDelegate()->LayoutUI(this);
+
+  // Control bounds are final only after OnResize() and LayoutUI(); PlatformResize() ran before them.
+  UpdateTooltips();
 }
 
 void IGraphics::SetLayoutOnResize(bool layoutOnResize)
@@ -1381,6 +1384,22 @@ int IGraphics::GetMouseControlIdx(float x, float y, bool mouseOver)
   }
   
   return -1;
+}
+
+bool IGraphics::AuxiliaryControlTakesMouse(float x, float y) const
+{
+  // Same precedence as GetMouseControl()
+  if (mPopupControl && mPopupControl->GetExpanded())
+    return true;
+  if (mTextEntryControl && mTextEntryControl->EditInProgress())
+    return true;
+#if !defined(NDEBUG)
+  if (mLiveEdit)
+    return true;
+#endif
+  if (mCornerResizer && mCornerResizer->GetRECT().Contains(x, y))
+    return true;
+  return mPerfDisplay && mPerfDisplay->GetRECT().Contains(x, y);
 }
 
 IControl* IGraphics::GetMouseControl(float x, float y, bool capture, bool mouseOver, ITouchID touchID)
