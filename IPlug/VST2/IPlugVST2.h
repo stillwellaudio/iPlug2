@@ -86,6 +86,7 @@ private:
 
   enum { VSTEXT_NONE=0, VSTEXT_COCKOS, VSTEXT_COCOA }; // list of VST extensions supported by host
   int mHasVSTExtensions;
+  bool mHostBypassNotified = false; // processing thread only
 
   IByteChunk mState;     // Persistent storage if the host asks for plugin state.
   IByteChunk mBankState; // Persistent storage if the host asks for bank state.
