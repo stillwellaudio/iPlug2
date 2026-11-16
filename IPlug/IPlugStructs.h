@@ -18,6 +18,7 @@
  */
 
 #include <algorithm>
+#include <limits>
 #include "wdlstring.h"
 #include "ptrlist.h"
 
@@ -72,11 +73,14 @@ struct IByteGetter
    * @return int The end position in bytes after the copy, or -1 if the copy would have copied more data than in the src buffer  */
   static inline int GetBytes(const uint8_t* pSrc, int srcSize, void* pDst, int nBytesToCopy, int startPos)
   {
-    int endPos = startPos + nBytesToCopy;
-    if (startPos >= 0 && endPos <= srcSize)
+    // Written so that no sum can overflow for any startPos or nBytesToCopy.
+    if (startPos >= 0 && startPos <= srcSize && nBytesToCopy >= 0 &&
+        nBytesToCopy <= srcSize - startPos &&
+        (nBytesToCopy == 0 || (pSrc && pDst)))
     {
-      memcpy(pDst, pSrc + startPos, nBytesToCopy);
-      return endPos;
+      if (nBytesToCopy > 0)
+        memcpy(pDst, pSrc + startPos, nBytesToCopy);
+      return startPos + nBytesToCopy;
     }
     return -1;
   }
@@ -91,16 +95,15 @@ struct IByteGetter
   {
     int len;
     int strStartPos = GetBytes(pSrc, srcSize, &len, sizeof(len), startPos);
-    if (strStartPos >= 0)
+    // A length that is negative or runs past the end is malformed: fail
+    // without touching str, and never return a position beyond srcSize.
+    if (strStartPos >= 0 && len >= 0 && len <= srcSize - strStartPos)
     {
       int strEndPos = strStartPos + len;
-      if (strEndPos <= srcSize)
-      {
-        if (len > 0)
-          str.Set((char*) (pSrc + strStartPos), len);
-        else
-          str.Set("");
-      }
+      if (len > 0)
+        str.Set((const char*) (pSrc + strStartPos), len);
+      else
+        str.Set("");
       return strEndPos;
     }
     return -1;
@@ -143,13 +146,21 @@ public:
   /** Copies data into the chunk, placing it at the end, resizing if necessary
    * @param pSrc Pointer to the data to copy
    * @param nBytesToCopy Number of bytes to copy
-   * @return int The size of the chunk after insertion  */
+   * @return int The size of the chunk after insertion, or -1 on invalid input or allocation failure. Invalid input leaves the chunk unchanged; after a failed resize WDL may have kept or emptied it */
   inline int PutBytes(const void* pSrc, int nBytesToCopy)
   {
-    int n = mBytes.GetSize();
-    mBytes.Resize(n + nBytesToCopy);
-    memcpy(mBytes.Get() + n, pSrc, nBytesToCopy);
-    return mBytes.GetSize();
+    const int n = mBytes.GetSize();
+    if (nBytesToCopy < 0 || n > std::numeric_limits<int>::max() - nBytesToCopy ||
+        (nBytesToCopy > 0 && !pSrc))
+      return -1;
+    if (nBytesToCopy == 0)
+      return n;
+    const int newSize = n + nBytesToCopy;
+    auto* bytes = mBytes.Resize(newSize);
+    if (!bytes || mBytes.GetSize() != newSize)
+      return -1;
+    memcpy(bytes + n, pSrc, nBytesToCopy);
+    return newSize;
   }
   
   /** Copy raw bytes from the IByteChunk, returning the new position for subsequent calls

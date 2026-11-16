@@ -24,6 +24,9 @@ struct IPlugVST3State
   template <class T>
   static bool GetState(T* pPlug, Steinberg::IBStream* pState)
   {
+    if (!pState)
+      return false;
+
     IByteChunk chunk;
     
     // TODO: IPlugVer should be in chunk!
@@ -51,6 +54,9 @@ struct IPlugVST3State
   {
     TRACE
     
+    if (!pState)
+      return false;
+
     IByteChunk chunk;
     
     const int bytesPerBlock = 128;
@@ -63,8 +69,13 @@ struct IPlugVST3State
       
       if (bytesRead <= 0 || (status != Steinberg::kResultTrue && pPlug->GetHost() != kHostWaveLab))
         break;
-      
-      chunk.PutBytes(buffer, bytesRead);
+
+      // A count above the request would read past buffer.
+      if (bytesRead > bytesPerBlock)
+        return false;
+
+      if (chunk.PutBytes(buffer, bytesRead) < 0)
+        return false; // allocation failed; the chunk would be incomplete
     }
 
     if (pPlug->RestoresStateTransactionally())
