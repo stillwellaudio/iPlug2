@@ -146,7 +146,7 @@ public:
   /** Copies data into the chunk, placing it at the end, resizing if necessary
    * @param pSrc Pointer to the data to copy
    * @param nBytesToCopy Number of bytes to copy
-   * @return int The size of the chunk after insertion, or -1 on invalid input or allocation failure (the chunk is then unchanged) */
+   * @return int The size of the chunk after insertion, or -1 on invalid input or allocation failure. Invalid input leaves the chunk unchanged; after a failed resize WDL may have kept or emptied it */
   inline int PutBytes(const void* pSrc, int nBytesToCopy)
   {
     const int n = mBytes.GetSize();
