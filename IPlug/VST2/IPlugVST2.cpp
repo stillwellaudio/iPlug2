@@ -769,6 +769,12 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
         {
           return _this->DoesMPE() ? 1 : 0;
         }
+
+        // Soft bypass: the host keeps calling process while bypassed.
+        if (!strcmp((char*)ptr, "bypass") && _this->HandlesHostBypassInternally())
+        {
+          return 1;
+        }
         
         return _this->VSTCanDo((char *) ptr);
       }
@@ -932,13 +938,23 @@ VstIntPtr VSTCALLBACK IPlugVST2::VSTDispatcher(AEffect *pEffect, VstInt32 opCode
 
       return handled ? 1 : 0;
     }
+    case effSetBypass:
+    {
+      if (!_this->HandlesHostBypassInternally())
+        return 0;
+
+      // The host may send this from any thread, including while another
+      // thread processes. Record the state only; the plug-in is notified on
+      // the processing thread (see VSTPreProcess()).
+      _this->SetBypassed(value != 0);
+      return 1;
+    }
     case effEndSetProgram:
     case effBeginSetProgram:
     case effGetMidiProgramName:
     case effHasMidiProgramsChanged:
     case effGetMidiProgramCategory:
     case effGetCurrentMidiProgram:
-    case effSetBypass:
     default:
     {
       return 0;
@@ -984,6 +1000,18 @@ void IPlugVST2::VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt3
 
   SetTimeInfo(timeInfo);
   SetRenderingOffline(renderingOffline);
+
+  // Same contract as AAX: plug-ins that handle bypass internally keep
+  // processing and are notified of changes on the processing thread.
+  if (HandlesHostBypassInternally())
+  {
+    const bool bypassed = GetBypassed();
+    if (bypassed != mHostBypassNotified)
+    {
+      mHostBypassNotified = bypassed;
+      OnHostBypassChanged(bypassed);
+    }
+  }
 
   IMidiMsg msg;
 
