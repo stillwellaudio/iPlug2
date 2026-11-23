@@ -67,6 +67,7 @@ tresult PLUGIN_API IPlugVST3::terminate()
 {
   TRACE
 
+  ResetLayoutNativeBuses();
   return SingleComponentEffect::terminate();
 }
 

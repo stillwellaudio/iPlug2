@@ -52,6 +52,7 @@ tresult PLUGIN_API IPlugVST3Processor::initialize(FUnknown* context)
 
 tresult PLUGIN_API IPlugVST3Processor::terminate()
 {
+  ResetLayoutNativeBuses();
   return AudioEffect::terminate();
 }
 

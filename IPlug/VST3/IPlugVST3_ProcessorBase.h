@@ -50,6 +50,7 @@ public:
     if (HasBusLayouts())
     {
       if (!BusLayoutsValid()) return false;
+      ResetLayoutNativeBuses();
       auto candidate = *GetBusLayoutPolicy()->Find(GetBusLayoutPolicy()->defaultID);
       std::vector<SpeakerArrangement> arrangements[2];
       for (int d=0; d<2; ++d)
@@ -259,6 +260,7 @@ public:
   bool ValidBusLayoutProcess(const Steinberg::Vst::ProcessData& data, const Steinberg::Vst::ProcessSetup& setup) const;
   bool IsLayoutActivated() const { return mLayoutActivated; }
   void SetLayoutActivated(bool active) { mLayoutActivated=active; }
+  void ResetLayoutNativeBuses() { mLayoutNativeBuses[0].clear(); mLayoutNativeBuses[1].clear(); mLayoutActivated=false; }
   
   // Audio Processing
   void PrepareProcessContext(Steinberg::Vst::ProcessData& data, Steinberg::Vst::ProcessSetup& setup);
