@@ -235,10 +235,13 @@ bool IPlugCLAP::init() noexcept
   {
     const auto* policy = GetBusLayoutPolicy();
     const auto* configuration = policy ? policy->Find(policy->defaultID) : nullptr;
-    return configuration && ClapConfigurationRepresentable(*configuration) && CommitBusLayout(*configuration);
+    if (!configuration || !ClapConfigurationRepresentable(*configuration) || !CommitBusLayout(*configuration))
+      return false;
   }
-
-  SetDefaultConfig();
+  else
+  {
+    SetDefaultConfig();
+  }
 
   // The host calls init only after the most-derived plug-in constructor has
   // completed, so the background timer cannot dispatch into a partial object.
