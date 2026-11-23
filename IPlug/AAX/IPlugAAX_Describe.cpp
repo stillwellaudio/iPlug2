@@ -9,6 +9,7 @@
 */
 
 #include "IPlugAAX.h"
+#include "IPlugAAXBusLayout.h"
 #include "config.h"
 
 //AAX Components
@@ -126,6 +127,82 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* pC)
   AAX_CTypeID aaxTypeIDsAudioSuite[] = {AAX_TYPE_IDS_AUDIOSUITE};
 #endif
   
+  const BusLayoutPolicy* busLayouts = nullptr;
+#ifdef PLUG_BUS_LAYOUTS
+  busLayouts = PLUG_BUS_LAYOUTS();
+#endif
+
+  if (busLayouts)
+  {
+#if AAX_DOES_AUDIOSUITE
+    constexpr bool kRequireAudioSuiteID = true;
+#else
+    constexpr bool kRequireAudioSuiteID = false;
+#endif
+    if (!aaxlayouts::ValidatePolicy(*busLayouts, kRequireAudioSuiteID))
+      return AAX_ERROR_INVALID_ARGUMENT;
+    WDL_PtrList<IOConfig> numericConfigs;
+    int ignoredInChannels=0, ignoredOutChannels=0, ignoredInBuses=0, ignoredOutBuses=0;
+    const int numericCount=IPlugProcessor::ParseChannelIOStr(PLUG_CHANNEL_IO, numericConfigs, ignoredInChannels, ignoredOutChannels, ignoredInBuses, ignoredOutBuses);
+    const auto hasNumericShape = [&](const BusLayoutConfiguration& layout) {
+      for (int index=0; index<numericCount; ++index) {
+        const IOConfig* numeric=numericConfigs.Get(index); bool same=true;
+        for (int direction=0; direction<2 && same; ++direction) {
+          const ERoute route=static_cast<ERoute>(direction);
+          if (layout.buses[direction].size() != static_cast<size_t>(numeric->NBuses(route))) { same=false; break; }
+          for (size_t bus=0; bus<layout.buses[direction].size(); ++bus)
+            if (layout.buses[direction][bus].layout.NChannels() != static_cast<uint32_t>(numeric->NChansOnBusSAFE(route, static_cast<int>(bus)))) { same=false; break; }
+        }
+        if (same) return true;
+      }
+      return false;
+    };
+
+    for (const auto& configuration : busLayouts->configurations)
+    {
+      if (!aaxlayouts::IsRegistered(configuration)) continue;
+      if (!hasNumericShape(configuration)) return AAX_ERROR_INVALID_ARGUMENT;
+      AAX_SIPlugSetupInfo setupInfo;
+      AAX_EStemFormat inputStem=AAX_eStemFormat_None, outputStem=AAX_eStemFormat_None;
+      if (!aaxlayouts::ToStem(configuration.buses[kOutput][0].layout, outputStem))
+        return AAX_ERROR_INVALID_ARGUMENT;
+      if (configuration.buses[kInput].empty())
+        inputStem=outputStem; // AAX instruments require an input stem even without an audio input bus.
+      else if (!aaxlayouts::ToStem(configuration.buses[kInput][0].layout, inputStem))
+        return AAX_ERROR_INVALID_ARGUMENT;
+      setupInfo.mInputStemFormat=inputStem;
+      setupInfo.mOutputStemFormat=outputStem;
+      setupInfo.mNumAuxOutputStems=static_cast<int32_t>(configuration.buses[kOutput].size()-1);
+      for (int i=0; i<setupInfo.mNumAuxOutputStems; ++i)
+      {
+        if (!aaxlayouts::ToStem(configuration.buses[kOutput][static_cast<size_t>(i+1)].layout, setupInfo.mAuxOutputStemFormats[i]))
+          return AAX_ERROR_INVALID_ARGUMENT;
+        setupInfo.mAuxOutputStemNames[i]=configuration.buses[kOutput][static_cast<size_t>(i+1)].name.c_str();
+      }
+      setupInfo.mManufacturerID=PLUG_MFR_ID;
+      setupInfo.mProductID=PLUG_UNIQUE_ID;
+      setupInfo.mPluginID=configuration.aaxNativeID;
+#if AAX_DOES_AUDIOSUITE
+      setupInfo.mAudiosuiteID=configuration.aaxAudioSuiteID;
+#endif
+      setupInfo.mWantsSideChain=configuration.buses[kInput].size()==2;
+      setupInfo.mCanBypass=true;
+      setupInfo.mNeedsInputMIDI=PLUG_DOES_MIDI_IN;
+      setupInfo.mInputMIDINodeName=PLUG_NAME " Midi";
+      setupInfo.mInputMIDIChannelMask=0x0001;
+      setupInfo.mNeedsOutputMIDI=PLUG_DOES_MIDI_OUT;
+      setupInfo.mOutputMIDINodeName=PLUG_NAME " Midi";
+      setupInfo.mOutputMIDIChannelMask=0x0001;
+      setupInfo.mNeedsTransport=true;
+      setupInfo.mLatency=PLUG_LATENCY;
+      if (strcmp(AAX_PLUG_CATEGORY_STR, "Dynamics") == 0) { setupInfo.mNumMeters=3; setupInfo.mMeterIDs=grMeterIDs; }
+      else { setupInfo.mNumMeters=2; setupInfo.mMeterIDs=stdMeterIDs; }
+      const auto componentResult=AAX_CIPlugParameters::StaticDescribe(pDesc, setupInfo);
+      if (componentResult!=AAX_SUCCESS) return componentResult;
+    }
+  }
+  else
+  {
   WDL_PtrList<IOConfig> channelIO;
   int totalNInChans = 0, totalNOutChans = 0;
   int totalNInBuses = 0, totalNOutBuses = 0;
@@ -248,6 +325,7 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* pC)
 
       AAX_ASSERT (err == AAX_SUCCESS);
     }
+  }
   }
 
   // Data model

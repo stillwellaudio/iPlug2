@@ -18,6 +18,7 @@
 #include "IPlugAPIBase.h"
 #include "IPlugProcessor.h"
 #include "IPlugVST3_Defs.h"
+#include "IPlugVST3_BusLayout.h"
 
 // Custom bus type function (in global namespace)
 #ifdef CUSTOM_BUSTYPE_FUNC
@@ -42,9 +43,41 @@ public:
   void RestoreHostBypass(bool bypassed) { SetBypassed(bypassed); }
   
   template <class T>
-  void Initialize(T* pPlug)
+  bool Initialize(T* pPlug)
   {
     using namespace Steinberg::Vst;
+
+    if (HasBusLayouts())
+    {
+      if (!BusLayoutsValid()) return false;
+      auto candidate = *GetBusLayoutPolicy()->Find(GetBusLayoutPolicy()->defaultID);
+      std::vector<SpeakerArrangement> arrangements[2];
+      for (int d=0; d<2; ++d)
+        for (auto& b : candidate.buses[d])
+        {
+          SpeakerArrangement arr;
+          if (!vst3layouts::ToArrangement(b.layout, arr)) return false;
+          arrangements[d].push_back(arr);
+        }
+      if (!CanApplyBusLayout(candidate)) return false;
+      String128 name;
+      for (int d=0; d<2; ++d)
+        for (size_t b=0; b<candidate.buses[d].size(); ++b)
+        {
+          auto& bus=candidate.buses[d][b];
+          Steinberg::UString(name,128).fromAscii(bus.name.empty() ? (d ? "Output" : "Input") : bus.name.c_str(),128);
+          const int flags=bus.active ? BusInfo::kDefaultActive : 0;
+          const BusType type=bus.role==BusRole::Main ? kMain : kAux;
+          auto* native=d ? pPlug->addAudioOutput(name,arrangements[d][b],type,flags)
+                         : pPlug->addAudioInput(name,arrangements[d][b],type,flags);
+          mLayoutNativeBuses[d].push_back(native);
+          bus.active=native->isActive();
+          vst3layouts::FromArrangement(arrangements[d][b],bus.layout);
+        }
+      if (DoesMIDIIn()) pPlug->addEventInput(STR16("MIDI Input"),VST3_NUM_MIDI_IN_CHANS);
+      if (DoesMIDIOut()) pPlug->addEventOutput(STR16("MIDI Output"),VST3_NUM_MIDI_OUT_CHANS);
+      return CommitBusLayout(std::move(candidate));
+    }
 
     Steinberg::Vst::String128 tmpStringBuf;
   
@@ -99,6 +132,7 @@ public:
     
     if (DoesMIDIOut())
       pPlug->addEventOutput(STR16("MIDI Output"), VST3_NUM_MIDI_OUT_CHANS);
+    return true;
   }
   
   // MIDI Processing
@@ -110,6 +144,43 @@ public:
   bool SetBusArrangements(T* pPlug, Steinberg::Vst::SpeakerArrangement* pInputBusArrangements, Steinberg::int32 numInBuses, Steinberg::Vst::SpeakerArrangement* pOutputBusArrangements, Steinberg::int32 numOutBuses)
   {
     using namespace Steinberg::Vst;
+
+    if (HasBusLayouts())
+    {
+      if (!BusLayoutsValid() || mLayoutActivated || numInBuses<0 || numOutBuses<0 ||
+          (numInBuses && !pInputBusArrangements) || (numOutBuses && !pOutputBusArrangements) ||
+          static_cast<size_t>(numInBuses)!=mLayoutNativeBuses[0].size() ||
+          static_cast<size_t>(numOutBuses)!=mLayoutNativeBuses[1].size()) return false;
+      // VST3 requests describe the existing bus set. Finite topology selection is
+      // available in CLAP; changing VST3 bus counts requires a host restart protocol.
+      for (const auto& declaration : GetBusLayoutPolicy()->configurations)
+      {
+        if (declaration.buses[0].size()!=static_cast<size_t>(numInBuses) ||
+            declaration.buses[1].size()!=static_cast<size_t>(numOutBuses)) continue;
+        auto candidate=declaration;
+        bool mapped=true;
+        for (int d=0; d<2 && mapped; ++d)
+          for (size_t b=0; b<candidate.buses[d].size(); ++b)
+          {
+            if (!vst3layouts::FromArrangement(d ? pOutputBusArrangements[b] : pInputBusArrangements[b],candidate.buses[d][b].layout))
+            { mapped=false; break; }
+            candidate.buses[d][b].active=mLayoutNativeBuses[d][b]->isActive();
+          }
+        if (!mapped || !CanApplyBusLayout(candidate)) continue;
+        for (int d=0; d<2; ++d)
+          for (size_t b=0; b<candidate.buses[d].size(); ++b)
+          {
+            auto* bus=mLayoutNativeBuses[d][b];
+            bus->setArrangement(d ? pOutputBusArrangements[b] : pInputBusArrangements[b]);
+            bus->setBusType(candidate.buses[d][b].role==BusRole::Main ? kMain : kAux);
+            Steinberg::Vst::String128 name {};
+            Steinberg::UString(name,128).fromAscii(candidate.buses[d][b].name.c_str());
+            bus->setName(std::u16string(name));
+          }
+        return CommitBusLayout(std::move(candidate));
+      }
+      return false;
+    }
     
     // This would seem to be a bug in Ardour
     if ((pPlug->GetHost() == kHostMixbus32C) || (pPlug->GetHost() == kHostArdour))
@@ -185,6 +256,9 @@ public:
   bool SetupProcessing(const Steinberg::Vst::ProcessSetup& setup, Steinberg::Vst::ProcessSetup& storedSetup);
   bool CanProcessSampleSize(Steinberg::int32 symbolicSampleSize);
   bool SetProcessing(bool state);
+  bool ValidBusLayoutProcess(const Steinberg::Vst::ProcessData& data, const Steinberg::Vst::ProcessSetup& setup) const;
+  bool IsLayoutActivated() const { return mLayoutActivated; }
+  void SetLayoutActivated(bool active) { mLayoutActivated=active; }
   
   // Audio Processing
   void PrepareProcessContext(Steinberg::Vst::ProcessData& data, Steinberg::Vst::ProcessSetup& setup);
@@ -196,6 +270,8 @@ public:
   bool SendMidiMsg(const IMidiMsg& msg) override;
 
 private:
+  std::vector<Steinberg::Vst::AudioBus*> mLayoutNativeBuses[2];
+  bool mLayoutActivated = false;
   int mMaxNChansForMainInputBus = 0;
   IPlugAPIBase& mPlug;
   Steinberg::Vst::ProcessContext mProcessContext;

@@ -86,6 +86,21 @@ public:
 #endif
 private:
 
+  OSStatus GetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope scope, AudioUnitElement element,
+                                UInt32* size, Boolean* writable, void* data);
+  OSStatus SetBusLayoutProperty(AudioUnitPropertyID prop, AudioUnitScope scope, AudioUnitElement element,
+                                UInt32 size, const void* data);
+  OSStatus RenderBusLayouts(AudioUnitRenderActionFlags* flags, const AudioTimeStamp* timestamp,
+                            UInt32 outputBus, UInt32 frames, AudioBufferList* output);
+  bool BusLayoutSupportedForSetup(const BusLayoutConfiguration& configuration, int direction=-1, int element=0) const;
+  bool PublishPendingBusLayouts();
+  BusLayoutConfiguration mPendingBusLayouts;
+  std::vector<std::vector<uint8_t>> mBusLayoutProperties[2];
+  std::vector<bool> mBusLayoutIsSet[2];
+  bool mPendingBusLayoutsValid = false;
+  bool mBusLayoutRenderCached = false;
+  UInt32 mBusLayoutRenderFrames = 0;
+
   enum EAUInputType
   {
     eNotConnected = 0,
@@ -156,6 +171,7 @@ private:
   static OSStatus AUMethodGetPropertyInfo(void* pSelf, AudioUnitPropertyID prop, AudioUnitScope scope, AudioUnitElement elem, UInt32* pOutDataSize, Boolean* pOutWritable);
   static OSStatus AUMethodGetProperty(void* pSelf, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, void* pOutData, UInt32* pIODataSize);
   static OSStatus AUMethodSetProperty(void* pSelf, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, const void* pInData, UInt32* pInDataSize);
+  static OSStatus AUMethodSetPropertyV2(void* pSelf, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, const void* pInData, UInt32 inDataSize);
   static OSStatus AUMethodAddPropertyListener(void* pSelf, AudioUnitPropertyID prop, AudioUnitPropertyListenerProc proc, void* pUserData);
   static OSStatus AUMethodRemovePropertyListener(void* pSelf, AudioUnitPropertyID prop, AudioUnitPropertyListenerProc proc);
   static OSStatus AUMethodRemovePropertyListenerWithUserData(void* pSelf, AudioUnitPropertyID prop, AudioUnitPropertyListenerProc proc, void* pUserData);
@@ -250,7 +266,7 @@ public:
       case kAudioUnitUninitializeSelect:            return (Method)IPlugAU::AUMethodUninitialize;
       case kAudioUnitGetPropertyInfoSelect:         return (Method)IPlugAU::AUMethodGetPropertyInfo;
       case kAudioUnitGetPropertySelect:             return (Method)IPlugAU::AUMethodGetProperty;
-      case kAudioUnitSetPropertySelect:             return (Method)IPlugAU::AUMethodSetProperty;
+      case kAudioUnitSetPropertySelect:             return (Method)IPlugAU::AUMethodSetPropertyV2;
         
       case kAudioUnitAddPropertyListenerSelect:     return (Method)IPlugAU::AUMethodAddPropertyListener;
       case kAudioUnitRemovePropertyListenerSelect:  return (Method)IPlugAU::AUMethodRemovePropertyListener;
@@ -316,5 +332,4 @@ public:
 END_IPLUG_NAMESPACE
 
 #endif
-
 

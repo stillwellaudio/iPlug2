@@ -147,6 +147,18 @@ private:
   uint32_t audioPortsConfigCount() const noexcept override;
   bool audioPortsGetConfig(uint32_t index, clap_audio_ports_config* pConfig) const noexcept override;
   bool audioPortsSetConfig(clap_id configIdx) noexcept override;
+
+  // clap_plugin_configurable_audio_ports and clap_plugin_surround
+  bool implementsConfigurableAudioPorts() const noexcept override;
+  bool configurableAudioPortsCanApplyConfiguration(const clap_audio_port_configuration_request* requests, uint32_t requestCount) const noexcept override;
+  bool configurableAudioPortsApplyConfiguration(const clap_audio_port_configuration_request* requests, uint32_t requestCount) noexcept override;
+  bool implementsSurround() const noexcept override;
+  bool isChannelMaskSupported(uint64_t channelMask) const noexcept override;
+  uint32_t getChannelMap(bool isInput, uint32_t portIndex, uint8_t* channelMap, uint32_t channelMapCapacity) const noexcept override;
+
+  // clap_plugin_ambisonic and clap_plugin_audio_ports_config_info are not
+  // exposed by this clap-helpers revision, so IPlugCLAP provides their vtables.
+  const void* extension(const char* id) noexcept override;
   
   // clap_plugin_note_ports
   bool implementsNotePorts() const noexcept override { return DoesMIDIIn() || DoesMIDIOut(); }
@@ -206,12 +218,21 @@ private:
   uint32_t NChannels(ERoute direction, uint32_t bus) const;
   uint32_t NBuses(ERoute direction, int configIdx) const;
   uint32_t NChannels(ERoute direction, uint32_t bus, int configIdx) const;
+  bool BuildBusLayoutCandidate(const clap_audio_port_configuration_request* requests, uint32_t requestCount, BusLayoutConfiguration& candidate) const;
+  bool GetBusLayoutPortInfo(const BusLayoutConfiguration& configuration, uint32_t index, bool isInput, clap_audio_port_info* info) const;
+  static clap_id ClapCurrentConfig(const clap_plugin* plugin);
+  static bool ClapGetConfigPortInfo(const clap_plugin* plugin, clap_id configID, uint32_t portIndex, bool isInput, clap_audio_port_info* info);
+  static bool ClapAmbisonicIsConfigSupported(const clap_plugin* plugin, const clap_ambisonic_config* config);
+  static bool ClapAmbisonicGetConfig(const clap_plugin* plugin, bool isInput, uint32_t portIndex, clap_ambisonic_config* config);
   
   IPlugQueue<ParamToHost> mParamValuesToHost {PARAM_TRANSFER_SIZE};
   IMidiQueueBase<SysExData> mSysExToHost;
   IMidiQueue mMidiToHost;
   WDL_TypedBuf<float *> mAudioIO32;
   WDL_TypedBuf<double *> mAudioIO64;
+  // Filled during activation for CLAP constant input channels; never resize in process().
+  WDL_TypedBuf<float> mConstantAudio32;
+  WDL_TypedBuf<double> mConstantAudio64;
   int mConfigIdx = 0;
   int mTailCount = 0;
   bool mHostHasTail = false;
