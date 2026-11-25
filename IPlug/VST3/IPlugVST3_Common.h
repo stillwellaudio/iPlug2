@@ -11,6 +11,7 @@
 #pragma once
 
 #include "pluginterfaces/base/ibstream.h"
+#include <limits>
 #
 #include "IPlugAPIBase.h"
 #include "IPlugVST3_Parameter.h"
@@ -21,9 +22,28 @@ BEGIN_IPLUG_NAMESPACE
 /** Shared VST3 State management code */
 struct IPlugVST3State
 {
+  static bool WriteAll(Steinberg::IBStream* stream, const void* data, int size)
+  {
+    if (!stream || size < 0 || (size > 0 && !data))
+      return false;
+    const auto* bytes = static_cast<const char*>(data);
+    int offset = 0;
+    while (offset < size)
+    {
+      Steinberg::int32 written = 0;
+      if (stream->write(const_cast<char*>(bytes + offset), size - offset, &written)
+            != Steinberg::kResultOk || written <= 0 || written > size - offset)
+        return false;
+      offset += written;
+    }
+    return true;
+  }
+
   template <class T>
   static bool GetState(T* pPlug, Steinberg::IBStream* pState)
   {
+    if (!pState)
+      return false;
     IByteChunk chunk;
     
     // TODO: IPlugVer should be in chunk!
@@ -35,22 +55,30 @@ struct IPlugVST3State
        int chunkSize = chunk.Size();
        void* data = (void*) &chunkSize;
        state->write(data, (Steinberg::int32) sizeof(int));*/
-      pState->write(chunk.GetData(), chunk.Size());
+      if (!WriteAll(pState, chunk.GetData(), chunk.Size()))
+        return false;
     }
     else
       return false;
     
     Steinberg::int32 toSaveBypass = pPlug->GetBypassed() ? 1 : 0;
-    pState->write(&toSaveBypass, sizeof (Steinberg::int32));
-    
-    return true;
+    return WriteAll(pState, &toSaveBypass, sizeof(Steinberg::int32));
   };
   
   template <class T>
   static bool SetState(T* pPlug, Steinberg::IBStream* pState)
+  try
   {
     TRACE
     
+    if (!pState)
+      return false;
+#ifdef IPLUG_VST3_STATE_MAX_BYTES
+    constexpr int maximumStateBytes = IPLUG_VST3_STATE_MAX_BYTES;
+#else
+    constexpr int maximumStateBytes = std::numeric_limits<int>::max();
+#endif
+    static_assert(maximumStateBytes > 0, "State byte limit must be positive");
     IByteChunk chunk;
     
     const int bytesPerBlock = 128;
@@ -61,10 +89,20 @@ struct IPlugVST3State
       Steinberg::int32 bytesRead = 0;
       auto status = pState->read(buffer, (Steinberg::int32) bytesPerBlock, &bytesRead);
       
-      if (bytesRead <= 0 || (status != Steinberg::kResultTrue && pPlug->GetHost() != kHostWaveLab))
+      if (bytesRead < 0 || bytesRead > bytesPerBlock)
+        return false;
+      if (bytesRead == 0)
+      {
+        if (status != Steinberg::kResultOk && status != Steinberg::kResultFalse)
+          return false;
         break;
-      
-      chunk.PutBytes(buffer, bytesRead);
+      }
+      if (status != Steinberg::kResultTrue && pPlug->GetHost() != kHostWaveLab)
+        return false;
+      const int previousSize = chunk.Size();
+      if (previousSize > maximumStateBytes - bytesRead ||
+          chunk.PutBytes(buffer, bytesRead) != previousSize + bytesRead)
+        return false;
     }
     int pos = pPlug->UnserializeState(chunk,0);
     if (pos < 0)
@@ -72,7 +110,9 @@ struct IPlugVST3State
     
     Steinberg::int32 savedBypass = 0;
     
-    pState->seek(pos,Steinberg::IBStream::IStreamSeekMode::kIBSeekSet);
+    if (pState->seek(pos, Steinberg::IBStream::IStreamSeekMode::kIBSeekSet)
+          != Steinberg::kResultOk)
+      return false;
     if (pState->read (&savedBypass, sizeof (Steinberg::int32)) != Steinberg::kResultOk) {
       return false;
     }
@@ -85,6 +125,8 @@ struct IPlugVST3State
     pPlug->OnRestoreState();
     
     return true;
+  } catch (...) {
+    return false;
   }
 };
 
