@@ -43,8 +43,17 @@ public:
     g.FillTriangle(color, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
   }
 
+  void OnAttached() override
+  {
+    if (GetUI())
+      GetUI()->EnableMouseOver(true);
+  }
+
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mod.R)
+      return;
+
     GetUI()->StartDragResize();
   }
     
@@ -55,9 +64,19 @@ public:
 
   void OnRescale() override
   {
-    float size = mSize * (1.f/GetUI()->GetDrawScale());
-    IRECT r = GetUI()->GetBounds().GetFromBRHC(size, size);
-    SetTargetAndDrawRECTs(r);
+    if (!GetUI())
+      return;
+
+    const float drawScale = std::max(GetUI()->GetDrawScale(), 0.0001f);
+    const float size = mSize * (1.f / drawScale);
+    const IRECT r = GetUI()->GetBounds().GetFromBRHC(size, size).GetPadded(-1.f);
+    mRECT = r;
+    mTargetRECT = r;
+  }
+
+  void OnResize() override
+  {
+    OnRescale();
   }
 
   void OnMouseOver(float x, float y, const IMouseMod& mod) override

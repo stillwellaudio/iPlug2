@@ -42,7 +42,10 @@ static double sFPS = 0.0;
 #define PARAM_EDIT_ID 99
 #define IPLUG_TIMER_ID 2
 
-#define TOOLTIPWND_MAXWIDTH 250
+#define TOOLTIPWND_MAXWIDTH 280
+#define TOOLTIP_HOVER_TIME_MS 600
+#define TOOLTIP_AUTOPOP_MS 20000
+#define TOOLTIP_RESHOW_MS 250
 
 #define WM_VBLANK (WM_USER+1)
 
@@ -434,6 +437,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         return 0;
 
       pGraphics->HideTooltip();
+      pGraphics->mTooltipIdx = -1;
       if (pGraphics->mParamEditWnd)
       {
         pGraphics->mParamEditMsg = kCommit;
@@ -442,6 +446,8 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       SetFocus(hWnd); // Added to get keyboard focus again when user clicks in window
       SetCapture(hWnd);
       IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
+      if (info.ms.A)
+        pGraphics->mSwallowAltMenu = true;
       std::vector<IMouseInfo> list{ info };
       pGraphics->OnMouseDown(list);
       return 0;
@@ -459,22 +465,29 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       if (!(wParam & (MK_LBUTTON | MK_RBUTTON)))
       {
         IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
-        if (pGraphics->OnMouseOver(info.x, info.y, info.ms))
+        const bool overControl = pGraphics->OnMouseOver(info.x, info.y, info.ms);
+        TRACKMOUSEEVENT eventTrack = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hWnd, HOVER_DEFAULT };
+        if (pGraphics->TooltipsEnabled())
         {
-          TRACKMOUSEEVENT eventTrack = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hWnd, HOVER_DEFAULT };
-          if (pGraphics->TooltipsEnabled()) 
+          const int c = overControl ? pGraphics->GetMouseOver() : -1;
+          if (c != pGraphics->mTooltipIdx)
           {
-            int c = pGraphics->GetMouseOver();
-            if (c != pGraphics->mTooltipIdx) 
+            pGraphics->HideTooltip();
+            pGraphics->mTooltipIdx = c;
+            if (c >= 0)
             {
-              if (c >= 0) eventTrack.dwFlags |= TME_HOVER;
-              pGraphics->mTooltipIdx = c;
-              pGraphics->HideTooltip();
+              eventTrack.dwFlags |= TME_HOVER;
+              eventTrack.dwHoverTime = TOOLTIP_HOVER_TIME_MS;
+            }
+            else
+            {
+              TRACKMOUSEEVENT cancelHover = { sizeof(TRACKMOUSEEVENT), TME_CANCEL | TME_HOVER, hWnd, 0 };
+              TrackMouseEvent(&cancelHover);
             }
           }
-
-          TrackMouseEvent(&eventTrack);
         }
+
+        TrackMouseEvent(&eventTrack);
       }
       else if (GetCapture() == hWnd && !pGraphics->IsInPlatformTextEntry())
       {
@@ -513,6 +526,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     case WM_MOUSELEAVE:
     {
       pGraphics->HideTooltip();
+      pGraphics->mTooltipIdx = -1;
       pGraphics->OnMouseOut();
       return 0;
     }
@@ -531,7 +545,11 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       if (IsTouchEvent())
         return 0;
 
+      pGraphics->HideTooltip();
+      pGraphics->mTooltipIdx = -1;
       IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
+      if (info.ms.A)
+        pGraphics->mSwallowAltMenu = true;
       if (pGraphics->OnMouseDblClick(info.x, info.y, info.ms))
       {
         SetCapture(hWnd);
@@ -540,6 +558,8 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     }
     case WM_MOUSEWHEEL:
     {
+      pGraphics->HideTooltip();
+      pGraphics->mTooltipIdx = -1;
       if (pGraphics->mParamEditWnd)
       {
         pGraphics->mParamEditMsg = kCancel;
@@ -548,6 +568,8 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
       else
       {
         IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
+        if (info.ms.A)
+          pGraphics->mSwallowAltMenu = true;
         float d = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
         const float scale = pGraphics->GetTotalScale();
         RECT r;
@@ -627,6 +649,29 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         CloseTouchInputHandle(hTouchInput);
       }
       return 0;
+    }
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+    {
+      // Swallow bare Alt (VK_MENU) transitions so Alt+click reset does not
+      // activate the host DAW's menu bar and trap keyboard focus. System
+      // chords such as Alt+F4 have wParam != VK_MENU and pass through normally.
+      if (wParam == VK_MENU)
+      {
+        if (msg == WM_SYSKEYUP)
+          pGraphics->mSwallowAltMenu = false;
+        return 0;
+      }
+      break;
+    }
+    case WM_SYSCOMMAND:
+    {
+      if ((wParam & 0xFFF0) == SC_KEYMENU && lParam == 0 && pGraphics->mSwallowAltMenu)
+      {
+        pGraphics->mSwallowAltMenu = false;
+        return 0;
+      }
+      break;
     }
     case WM_GETDLGCODE:
       return DLGC_WANTALLKEYS;
@@ -1893,6 +1938,9 @@ void IGraphicsWin::UpdateTooltips()
         TOOLINFOW ti = { TTTOOLINFOW_V2_SIZE, TTF_IDISHWND | TTF_SUBCLASS, mPlugWnd, (UINT_PTR) mPlugWnd, {0, 0, 0, 0}, NULL, NULL, 0, NULL };
         SendMessageW(mTooltipWnd, TTM_ADDTOOLW, 0, (LPARAM) &ti);
         SendMessageW(mTooltipWnd, TTM_SETMAXTIPWIDTH, 0, TOOLTIPWND_MAXWIDTH);
+        SendMessageW(mTooltipWnd, TTM_SETDELAYTIME, TTDT_AUTOPOP, MAKELPARAM(TOOLTIP_AUTOPOP_MS, 0));
+        SendMessageW(mTooltipWnd, TTM_SETDELAYTIME, TTDT_INITIAL, MAKELPARAM(TOOLTIP_HOVER_TIME_MS, 0));
+        SendMessageW(mTooltipWnd, TTM_SETDELAYTIME, TTDT_RESHOW, MAKELPARAM(TOOLTIP_RESHOW_MS, 0));
       }
     }
     if (!mTooltipWnd)
@@ -1902,6 +1950,7 @@ void IGraphicsWin::UpdateTooltips()
     }
   }
 
+  HideTooltip();
   mTooltipIdx = -1; // Rearm hover on the next mouse move, including the same control.
   SendMessageW(mTooltipWnd, TTM_ACTIVATE, TRUE, 0);
 }
@@ -1921,9 +1970,14 @@ void IGraphicsWin::ShowTooltip()
     if (auto* pTooltipControl = GetControl(mTooltipIdx))
     {
       const char* tooltipStr = pTooltipControl->GetTooltip();
-      if (tooltipStr)
+      if (CStringHasContents(tooltipStr))
       {
         SetTooltip(tooltipStr);
+        SendMessageW(mTooltipWnd, TTM_ACTIVATE, FALSE, 0);
+        SendMessageW(mTooltipWnd, TTM_ACTIVATE, TRUE, 0);
+#ifdef TTM_POPUP
+        SendMessageW(mTooltipWnd, TTM_POPUP, 0, 0);
+#endif
         mShowingTooltip = true;
       }
     }
@@ -1932,8 +1986,9 @@ void IGraphicsWin::ShowTooltip()
 
 void IGraphicsWin::HideTooltip()
 {
-  if (mShowingTooltip)
+  if (mTooltipWnd && mShowingTooltip)
   {
+    SendMessageW(mTooltipWnd, TTM_POP, 0, 0);
     SetTooltip(NULL);
     mShowingTooltip = false;
   }

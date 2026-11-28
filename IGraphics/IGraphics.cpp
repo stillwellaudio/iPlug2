@@ -99,6 +99,7 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   if (!mResizingInProcess)
     ReleaseMouseCapture();
 
+  const float prevScale = mDrawScale;
   mDrawScale = scale;
   mWidth = w;
   mHeight = h;
@@ -112,6 +113,8 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   bool parentResized = GetDelegate()->EditorResizeFromUI(windowWidth, windowHeight, needsPlatformResize);
   PlatformResize(parentResized);
   ForAllControls(&IControl::OnResize);
+  if (!mResizingInProcess && scale != prevScale)
+    ForAllControls(&IControl::OnRescale);
   SetAllControlsDirty();
   DrawResize();
   
@@ -1059,7 +1062,7 @@ void IGraphics::OnMouseDown(const std::vector<IMouseInfo>& points)
 #endif
 
 #ifndef IGRAPHICS_NO_CONTEXT_MENU
-      if (mod.R && paramIdx > kNoParameter)
+      if (mod.R && !mod.L && paramIdx > kNoParameter)
       {
         ReleaseMouseCapture();
         PopupHostContextMenuForParam(pCapturedControl, paramIdx, x, y);
@@ -1073,6 +1076,7 @@ void IGraphics::OnMouseDown(const std::vector<IMouseInfo>& points)
           GetDelegate()->BeginInformHostOfParamChangeFromUI(pCapturedControl->GetParamIdx(v));
       }
 
+      pCapturedControl->SetDragLockedOut(false);
       pCapturedControl->OnMouseDown(x, y, mod);
     }
   }
@@ -1096,6 +1100,7 @@ void IGraphics::OnMouseUp(const std::vector<IMouseInfo>& points)
         IControl* pCapturedControl = itr->second;
       
         pCapturedControl->OnMouseUp(x, y, mod);
+        pCapturedControl->SetDragLockedOut(false);
       
         int nVals = pCapturedControl->NVals();
 
@@ -1143,6 +1148,7 @@ void IGraphics::OnTouchCancelled(const std::vector<IMouseInfo>& points)
       if(itr != mCapturedMap.end())
       {
         IControl* pCapturedControl = itr->second;
+        pCapturedControl->SetDragLockedOut(false);
         pCapturedControl->OnTouchCancelled(x, y, mod);
         mCapturedMap.erase(mod.touchID); // remove from captured list
         
@@ -1218,7 +1224,7 @@ void IGraphics::OnMouseDrag(const std::vector<IMouseInfo>& points)
         if (textEntry && pCapturedControl != textEntry)
             pCapturedControl = nullptr;
           
-        if (pCapturedControl && (dX != 0 || dY != 0))
+        if (pCapturedControl && !pCapturedControl->IsDragLockedOut() && (dX != 0 || dY != 0))
         {
           pCapturedControl->OnMouseDrag(x, y, dX, dY, mod);
         }
@@ -1345,6 +1351,11 @@ void IGraphics::OnDropMultiple(const std::vector<const char*>& paths, float x, f
 
 void IGraphics::ReleaseMouseCapture()
 {
+  for (auto& entry : mCapturedMap)
+  {
+    if (entry.second)
+      entry.second->SetDragLockedOut(false);
+  }
   mCapturedMap.clear();
   if (mCursorHidden)
     HideMouseCursor(false);

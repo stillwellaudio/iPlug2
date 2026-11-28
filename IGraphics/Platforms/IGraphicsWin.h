@@ -158,6 +158,7 @@ private:
 
   EParamEditMsg mParamEditMsg = kNone;
   bool mShowingTooltip = false;
+  bool mSwallowAltMenu = false;
   float mHiddenCursorX = 0.f;
   float mHiddenCursorY = 0.f;
   int mTooltipIdx = -1;

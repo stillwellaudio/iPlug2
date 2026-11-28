@@ -332,6 +332,16 @@ public:
       return false;
     }
   }
+
+  /** Constrain an incoming host-driven window resize (in platform window coordinates).
+   * Fixed-canvas scaling editors override this to keep aspect-locked uniform scale bounds.
+   * @param w incoming platform window width to test/adjust
+   * @param h incoming platform window height to test/adjust
+   * @return \c true if the dimensions already satisfied constraints */
+  virtual bool ConstrainHostEditorResize(int& w, int& h) const
+  {
+    return ConstrainEditorResize(w, h);
+  }
   
   /** Serializes the editor state (such as scale) into a binary chunk.
    * @param chunk The output chunk to serialize to. Will append data if the chunk has already been started.

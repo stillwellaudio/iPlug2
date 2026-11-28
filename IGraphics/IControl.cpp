@@ -192,6 +192,8 @@ void IControl::SetValueToDefault(int valIdx)
   };
     
   ForValIdx(valIdx, paramDefault);
+  if (mGraphics && mGraphics->ControlIsCaptured(this))
+    mDragLockedOut = true;
   SetDirty(true, valIdx);
 }
 
@@ -261,7 +263,7 @@ void IControl::SetDisabled(bool disable)
 
 void IControl::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
-  if (mod.R)
+  if (mod.R && !mod.L)
     PromptUserInput(GetValIdxForPos(x, y));
 }
 
@@ -781,7 +783,14 @@ void ISwitchControlBase::OnInit()
 }
 
 void ISwitchControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
-{  
+{
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    SetValueToDefault(GetValIdxForPos(x, y));
+    SetDragLockedOut(true);
+    return;
+  }
+
   if (mNumStates == 2)
     SetValue(!GetValue());
   else
@@ -801,6 +810,7 @@ void ISwitchControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
 void ISwitchControlBase::OnMouseUp(float x, float y, const IMouseMod& mod)
 {
   mMouseDown = false;
+  SetDragLockedOut(false);
   SetDirty(false);
 }
 
@@ -812,6 +822,8 @@ bool IKnobControlBase::IsFineControl(const IMouseMod& mod, bool wheel) const
 #else
   return wheel ? mod.C : mod.R;
 #endif
+#elif defined OS_MAC
+  return (mod.C || mod.S || (mod.L && mod.R));
 #else
   return (mod.C || mod.S);
 #endif
@@ -819,6 +831,15 @@ bool IKnobControlBase::IsFineControl(const IMouseMod& mod, bool wheel) const
 
 void IKnobControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    SetValueToDefault(GetValIdxForPos(x, y));
+    mMouseDragValue = GetValue();
+    mMouseDown = false;
+    SetDragLockedOut(true);
+    return;
+  }
+
   mMouseDown = true;
   mMouseDragValue = GetValue();
 
@@ -830,15 +851,19 @@ void IKnobControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
 
 void IKnobControlBase::OnMouseUp(float x, float y, const IMouseMod& mod)
 {
-  if (mHideCursorOnDrag)
+  if (mMouseDown && mHideCursorOnDrag)
     GetUI()->HideMouseCursor(false);
   
   mMouseDown = false;
+  SetDragLockedOut(false);
   SetDirty(false);
 }
 
 void IKnobControlBase::OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod)
 {
+  if (IsDragLockedOut())
+    return;
+
   double gearing = IsFineControl(mod, false) ? mGearing * 10.0 : mGearing;
   
   IRECT dragBounds = GetKnobDragBounds();
@@ -915,6 +940,15 @@ void ISliderControlBase::OnResize()
 
 void ISliderControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    SetValueToDefault(GetValIdxForPos(x, y));
+    mMouseDragValue = GetValue();
+    mMouseDown = false;
+    SetDragLockedOut(true);
+    return;
+  }
+
   mMouseDown = true;
   
   if(GetParam())
@@ -935,15 +969,19 @@ void ISliderControlBase::OnMouseDown(float x, float y, const IMouseMod& mod)
 
 void ISliderControlBase::OnMouseUp(float x, float y, const IMouseMod& mod)
 {
-  if (mHideCursorOnDrag)
+  if (mMouseDown && mHideCursorOnDrag)
     GetUI()->HideMouseCursor(false);
   
   mMouseDown = false;
+  SetDragLockedOut(false);
   SetDirty(false);
 }
 
 void ISliderControlBase::OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod)
 {
+  if (IsDragLockedOut())
+    return;
+
   const IParam* pParam = GetParam();
 
   if(mod.touchID || !mHideCursorOnDrag)
@@ -1020,6 +1058,8 @@ bool ISliderControlBase::IsFineControl(const IMouseMod& mod, bool wheel) const
 #else
   return wheel ? mod.C : mod.R;
 #endif
+#elif defined OS_MAC
+  return (mod.C || mod.S || (mod.L && mod.R));
 #else
   return (mod.C || mod.S);
 #endif

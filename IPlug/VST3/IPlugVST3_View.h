@@ -128,7 +128,7 @@ public:
     int w = pRect->getWidth();
     int h = pRect->getHeight();
     
-    if(!mOwner.ConstrainEditorResize(w, h))
+    if(!mOwner.ConstrainHostEditorResize(w, h))
     {
       pRect->right = pRect->left + w;
       pRect->bottom = pRect->top + h;

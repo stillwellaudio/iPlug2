@@ -680,6 +680,12 @@ void IVKnobControl::DrawPointer(IGraphics& g, float angle, float cx, float cy, f
 
 void IVKnobControl::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    IKnobControlBase::OnMouseDown(x, y, mod);
+    return;
+  }
+
   if(mStyle.showValue && mValueBounds.Contains(x, y))
   {
     PromptUserInput(mValueBounds);
@@ -703,8 +709,10 @@ void IVKnobControl::OnMouseDblClick(float x, float y, const IMouseMod& mod)
 
 void IVKnobControl::OnMouseUp(float x, float y, const IMouseMod& mod)
 {
+  const bool wasLockedOut = IsDragLockedOut();
   IKnobControlBase::OnMouseUp(x, y, mod);
-  SetDirty(true);
+  if (!wasLockedOut)
+    SetDirty(true);
 }
 
 void IVKnobControl::OnMouseOver(float x, float y, const IMouseMod& mod)
@@ -844,6 +852,12 @@ void IVSliderControl::DrawHandle(IGraphics& g, const IRECT& bounds)
 
 void IVSliderControl::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    ISliderControlBase::OnMouseDown(x, y, mod);
+    return;
+  }
+
   if(mStyle.showValue && mValueBounds.Contains(x, y))
   {
     PromptUserInput(mValueBounds);
@@ -865,8 +879,10 @@ void IVSliderControl::OnMouseDblClick(float x, float y, const IMouseMod& mod)
 
 void IVSliderControl::OnMouseUp(float x, float y, const IMouseMod& mod)
 {
+  const bool wasLockedOut = IsDragLockedOut();
   ISliderControlBase::OnMouseUp(x, y, mod);
-  SetDirty(true);
+  if (!wasLockedOut)
+    SetDirty(true);
 }
 
 void IVSliderControl::OnMouseOver(float x, float y, const IMouseMod& mod)
@@ -1652,6 +1668,13 @@ IBSwitchControl::IBSwitchControl(const IRECT& bounds, const IBitmap& bitmap, int
 
 void IBSwitchControl::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  if (mod.A && mod.L && !mod.R && !mod.C && !mod.S)
+  {
+    SetValueToDefault(GetValIdxForPos(x, y));
+    SetDragLockedOut(true);
+    return;
+  }
+
   if (mBitmap.N() > 1)
     SetValue(GetValue() + 1.0 / static_cast<double>(mBitmap.N() - 1));
   else

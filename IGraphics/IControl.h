@@ -386,6 +386,12 @@ public:
   /** @return \c true if the control ignores mouse events */
   bool GetIgnoreMouse() const { return mIgnoreMouse; }
   
+  /** Lock out OnMouseDrag() until mouse-up (e.g. after Alt/Option+click reset to default) */
+  void SetDragLockedOut(bool locked) { mDragLockedOut = locked; }
+
+  /** @return \c true if drag tracking is locked out until mouse-up */
+  bool IsDragLockedOut() const { return mDragLockedOut; }
+
   /** Specify whether the control should respond to mouse events
    * @param ignore \c true if it should ignore mouse events */
   virtual void SetIgnoreMouse(bool ignore) { mIgnoreMouse = ignore; }
@@ -561,6 +567,7 @@ protected:
   bool mMouseOverWhenDisabled = false;
   bool mMouseEventsWhenDisabled = false;
   bool mIgnoreMouse = false;
+  bool mDragLockedOut = false;
   bool mWantsMidi = false;
   bool mWantsMultiTouch = false;
   bool mPromptShowsParamLabel = false;

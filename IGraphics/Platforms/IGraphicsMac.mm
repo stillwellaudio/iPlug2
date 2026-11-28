@@ -146,6 +146,7 @@ void IGraphicsMac::CloseWindow()
 #endif
       
     [pView removeAllToolTips];
+    [pView resetTooltipState];
     [pView killTimer];
     [pView removeFromSuperview];
     [pView release];
@@ -392,31 +393,9 @@ void IGraphicsMac::UpdateTooltips()
     return;
 
   @autoreleasepool {
-
-  [(IGRAPHICS_VIEW*) mView removeAllToolTips];
-
-  if (!TooltipsEnabled())
-    return;
-
-  if (GetPopupMenuControl() && GetPopupMenuControl()->GetState() > IPopupMenuControl::kCollapsed)
-  {
-    return;
-  }
-
-  auto func = [this](IControl* pControl)
-  {
-    if (CStringHasContents(pControl->GetTooltip()) && !pControl->IsHidden())
-    {
-      IRECT pR = pControl->GetTargetRECT();
-      if (!pR.Empty())
-      {
-        [(IGRAPHICS_VIEW*) mView registerToolTip: pR owner: pControl];
-      }
-    }
-  };
-
-  ForStandardControlsFunc(func);
-  
+    IGRAPHICS_VIEW* pView = (IGRAPHICS_VIEW*) mView;
+    [pView removeAllToolTips];
+    [pView resetTooltipState];
   }
 }
 

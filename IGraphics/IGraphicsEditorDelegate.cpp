@@ -161,6 +161,35 @@ void IGEditorDelegate::SetScreenScale(float scale)
     mGraphics->SetScreenScale(scale);
 }
 
+bool IGEditorDelegate::ConstrainHostEditorResize(int& w, int& h) const
+{
+  if (const auto* pGraphics = GetUI())
+  {
+    if (pGraphics->GetResizerMode() == EUIResizerMode::Scale && !pGraphics->GetLayoutOnResize())
+    {
+      const int logicalWidth = pGraphics->Width();
+      const int logicalHeight = pGraphics->Height();
+      const float platformScale = pGraphics->GetPlatformWindowScale();
+      if (logicalWidth > 0 && logicalHeight > 0 && platformScale > 0.f)
+      {
+        const float currentScale = pGraphics->GetDrawScale();
+        const float scaleX = (static_cast<float>(w) / platformScale) / static_cast<float>(logicalWidth);
+        const float scaleY = (static_cast<float>(h) / platformScale) / static_cast<float>(logicalHeight);
+        const float chosenScale = (std::fabs(scaleX - currentScale) >= std::fabs(scaleY - currentScale)) ? scaleX : scaleY;
+        const float clampedScale = pGraphics->ConstrainDrawScale(chosenScale);
+        const int targetW = static_cast<int>(static_cast<int>(logicalWidth * clampedScale) * platformScale);
+        const int targetH = static_cast<int>(static_cast<int>(logicalHeight * clampedScale) * platformScale);
+        if (w == targetW && h == targetH)
+          return true;
+        w = targetW;
+        h = targetH;
+        return false;
+      }
+    }
+  }
+  return IEditorDelegate::ConstrainEditorResize(w, h);
+}
+
 void IGEditorDelegate::SendControlValueFromDelegate(int ctrlTag, double normalizedValue)
 {
   if(!mGraphics)

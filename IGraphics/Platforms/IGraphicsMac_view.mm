@@ -391,6 +391,12 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   
   mMouseOutDuringDrag = false;
   mScaleResizeDrag = false;
+  mTooltipPanel = nil;
+  mTooltipLabel = nil;
+  mTooltipShowTimer = nil;
+  mTooltipHideTimer = nil;
+  mTooltipControl = nullptr;
+  mTooltipAnchorPoint = NSZeroPoint;
 
   self.wantsLayer = YES;
   self.layer.opaque = YES;
@@ -507,6 +513,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) killTimer
 {
+  [self resetTooltipState];
 #ifdef IGRAPHICS_CVDISPLAYLINK
   CVDisplayLinkStop(mDisplayLink);
   dispatch_source_cancel(mDisplaySource);
@@ -523,6 +530,11 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   if([NSColorPanel sharedColorPanelExists])
     [[NSColorPanel sharedColorPanel] close];
   
+  [self resetTooltipState];
+  [mTooltipPanel release];
+  mTooltipPanel = nil;
+  [mTooltipLabel release];
+  mTooltipLabel = nil;
   mColorPickerFunc = nullptr;
   [mMoveCursor release];
   [mTrackingArea release];
@@ -557,6 +569,15 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 - (BOOL) acceptsFirstMouse: (NSEvent*) pEvent
 {
   return YES;
+}
+
+- (void) viewWillMoveToWindow: (NSWindow*) newWindow
+{
+  if (!newWindow)
+  {
+    [self resetTooltipState];
+  }
+  [super viewWillMoveToWindow:newWindow];
 }
 
 - (void) viewDidMoveToWindow
@@ -715,7 +736,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     [mTrackingArea release];
   }
     
-  int opts = (NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingEnabledDuringMouseDrag);
+  int opts = (NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingEnabledDuringMouseDrag);
   mTrackingArea = [ [NSTrackingArea alloc] initWithRect:[self bounds] options:opts owner:self userInfo:nil];
   [self addTrackingArea:mTrackingArea];
 }
@@ -732,6 +753,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseExited: (NSEvent*) pEvent
 {
+  [self resetTooltipState];
   if (mGraphics)
   {
     if (!mGraphics->ControlIsCaptured())
@@ -747,6 +769,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseDown: (NSEvent*) pEvent
 {
+  [self resetTooltipState];
   IMouseInfo info = [self getMouseLeft:pEvent];
   if (mGraphics)
   {
@@ -820,6 +843,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) rightMouseDown: (NSEvent*) pEvent
 {
+  [self resetTooltipState];
   IMouseInfo info = [self getMouseRight:pEvent];
   if (mGraphics)
   {
@@ -865,11 +889,16 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 {
   IMouseInfo info = [self getMouseLeft:pEvent];
   if (mGraphics)
+  {
     mGraphics->OnMouseOver(info.x, info.y, info.ms);
+    NSPoint viewPt = [self convertPoint:[pEvent locationInWindow] fromView:nil];
+    [self updateTooltipHoverAtPoint:viewPt];
+  }
 }
 
 - (void) keyDown: (NSEvent*) pEvent
 {
+  [self resetTooltipState];
   int flag = 0;
   int code = MacKeyEventToVK(pEvent, flag);
   NSString *s = [pEvent charactersIgnoringModifiers];
@@ -932,6 +961,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) scrollWheel: (NSEvent*) pEvent
 {
+  [self resetTooltipState];
   if (mTextFieldView) [self endUserInput ];
   IMouseInfo info = [self getMouseLeft:pEvent];
   float d = [pEvent deltaY];
@@ -1253,64 +1283,248 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
   mColorPickerFunc(FromNSColor([pColorPanel color]));
 }
 
-- (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData
+static const NSTimeInterval kStwTooltipHoverDelay = 0.6;
+static const NSTimeInterval kStwTooltipAutoHideDelay = 20.0;
+static const CGFloat kStwTooltipMaxWidth = 280.0;
+
+- (void) cancelTooltipTimers
 {
-  if (!mGraphics || !mGraphics->TooltipsEnabled())
-    return @"";
-
-  // AppKit asks once, where the cursor enters a tooltip rect, and keeps the answer while the
-  // cursor stays in it, so answer for the control that owns the rect rather than the control
-  // under the entry point. The control may have been removed, or moved away from this rect,
-  // since the rects were built.
-  const float x = point.x / mGraphics->GetDrawScale();
-  const float y = point.y / mGraphics->GetDrawScale();
-
-  int owner = -1;
-  for (int c = 0; c < mGraphics->NControls(); ++c)
+  if (mTooltipShowTimer)
   {
-    if (mGraphics->GetControl(c) == pData)
+    [mTooltipShowTimer invalidate];
+    mTooltipShowTimer = nil;
+  }
+  if (mTooltipHideTimer)
+  {
+    [mTooltipHideTimer invalidate];
+    mTooltipHideTimer = nil;
+  }
+}
+
+- (void) hideTooltip
+{
+  [self cancelTooltipTimers];
+  if (mTooltipPanel)
+  {
+    [mTooltipPanel orderOut:nil];
+  }
+}
+
+- (void) resetTooltipState
+{
+  [self hideTooltip];
+  mTooltipControl = nullptr;
+}
+
+- (void) ensureTooltipPanel
+{
+  if (mTooltipPanel)
+    return;
+
+  NSRect initialRect = NSMakeRect(0.0, 0.0, 120.0, 24.0);
+  mTooltipPanel = [[NSPanel alloc] initWithContentRect:initialRect
+                                             styleMask:(NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel)
+                                               backing:NSBackingStoreBuffered
+                                                 defer:YES];
+  [mTooltipPanel setLevel:NSPopUpMenuWindowLevel];
+  [mTooltipPanel setOpaque:NO];
+  [mTooltipPanel setBackgroundColor:[NSColor clearColor]];
+  [mTooltipPanel setHasShadow:YES];
+  [mTooltipPanel setIgnoresMouseEvents:YES];
+  [mTooltipPanel setHidesOnDeactivate:YES];
+  [mTooltipPanel setReleasedWhenClosed:NO];
+  [mTooltipPanel setCollectionBehavior:(NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorIgnoresCycle)];
+
+  NSView* content = [[[NSView alloc] initWithFrame:initialRect] autorelease];
+  [content setWantsLayer:YES];
+  content.layer.cornerRadius = 5.0;
+  content.layer.borderWidth = 0.75;
+  [mTooltipPanel setContentView:content];
+
+  mTooltipLabel = [[NSTextField alloc] initWithFrame:initialRect];
+  [mTooltipLabel setEditable:NO];
+  [mTooltipLabel setSelectable:NO];
+  [mTooltipLabel setBezeled:NO];
+  [mTooltipLabel setDrawsBackground:NO];
+  [mTooltipLabel setLineBreakMode:NSLineBreakByWordWrapping];
+  [mTooltipLabel setUsesSingleLineMode:NO];
+  [mTooltipLabel setPreferredMaxLayoutWidth:kStwTooltipMaxWidth];
+  [mTooltipLabel setFont:[NSFont toolTipsFontOfSize:11.0]];
+  [content addSubview:mTooltipLabel];
+}
+
+- (void) showTooltipText: (NSString*) text atViewPoint: (NSPoint) viewPoint
+{
+  if (!text || [text length] == 0 || !self.window || ![self.window isVisible])
+    return;
+
+  [self ensureTooltipPanel];
+
+  if (@available(macOS 10.14, *))
+  {
+    [mTooltipPanel setAppearance:[self effectiveAppearance]];
+    NSColor* bg = [[NSColor windowBackgroundColor] colorWithAlphaComponent:0.96];
+    NSColor* border = [[NSColor separatorColor] colorWithAlphaComponent:0.9];
+    NSColor* fg = [NSColor labelColor];
+    [mTooltipPanel.contentView.layer setBackgroundColor:bg.CGColor];
+    [mTooltipPanel.contentView.layer setBorderColor:border.CGColor];
+    [mTooltipLabel setTextColor:fg];
+  }
+  else
+  {
+    [mTooltipPanel.contentView.layer setBackgroundColor:[[NSColor colorWithCalibratedWhite:0.15 alpha:0.96] CGColor]];
+    [mTooltipPanel.contentView.layer setBorderColor:[[NSColor colorWithCalibratedWhite:0.4 alpha:0.9] CGColor]];
+    [mTooltipLabel setTextColor:[NSColor whiteColor]];
+  }
+
+  [mTooltipLabel setStringValue:text];
+
+  NSDictionary* attrs = [NSDictionary dictionaryWithObject:[mTooltipLabel font] forKey:NSFontAttributeName];
+  NSRect textRect = [text boundingRectWithSize:NSMakeSize(kStwTooltipMaxWidth, 400.0)
+                                       options:(NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading)
+                                    attributes:attrs];
+  const CGFloat padX = 8.0;
+  const CGFloat padY = 5.0;
+  const CGFloat textW = ceil(NSWidth(textRect)) + 4.0;
+  const CGFloat textH = ceil(NSHeight(textRect)) + 2.0;
+  const CGFloat panelW = textW + padX * 2.0;
+  const CGFloat panelH = textH + padY * 2.0;
+
+  [mTooltipPanel.contentView setFrame:NSMakeRect(0.0, 0.0, panelW, panelH)];
+  [mTooltipLabel setFrame:NSMakeRect(padX, padY, textW, textH)];
+
+  NSPoint winPt = [self convertPoint:viewPoint toView:nil];
+  NSRect screenAnchor = [self.window convertRectToScreen:NSMakeRect(winPt.x, winPt.y, 1.0, 1.0)];
+
+  CGFloat originX = screenAnchor.origin.x + 12.0;
+  CGFloat originY = screenAnchor.origin.y - panelH - 18.0;
+
+  NSScreen* screen = self.window.screen ?: [NSScreen mainScreen];
+  if (screen)
+  {
+    NSRect visible = [screen visibleFrame];
+    if (originX + panelW > NSMaxX(visible) - 4.0)
+      originX = NSMaxX(visible) - panelW - 4.0;
+    if (originX < NSMinX(visible) + 4.0)
+      originX = NSMinX(visible) + 4.0;
+    if (originY < NSMinY(visible) + 4.0)
+      originY = screenAnchor.origin.y + 18.0;
+    if (originY + panelH > NSMaxY(visible) - 4.0)
+      originY = NSMaxY(visible) - panelH - 4.0;
+  }
+
+  [mTooltipPanel setFrame:NSMakeRect(round(originX), round(originY), panelW, panelH) display:YES];
+  [mTooltipPanel orderFront:nil];
+}
+
+- (void) onTooltipShowTimer: (NSTimer*) pTimer
+{
+  mTooltipShowTimer = nil;
+
+  if (!mGraphics || !mGraphics->TooltipsEnabled() || mGraphics->ControlIsCaptured() || !self.window || ![self.window isVisible])
+  {
+    [self resetTooltipState];
+    return;
+  }
+
+  IControl* current = mGraphics->GetMouseOverControl();
+  if (!current || current != mTooltipControl || current->IsHidden())
+  {
+    [self resetTooltipState];
+    return;
+  }
+
+  const char* tip = current->GetTooltip();
+  if (!CStringHasContents(tip))
+  {
+    [self resetTooltipState];
+    return;
+  }
+
+  [self showTooltipText:[NSString stringWithUTF8String:tip] atViewPoint:mTooltipAnchorPoint];
+
+  if (mTooltipHideTimer)
+  {
+    [mTooltipHideTimer invalidate];
+    mTooltipHideTimer = nil;
+  }
+  mTooltipHideTimer = [NSTimer timerWithTimeInterval:kStwTooltipAutoHideDelay
+                                              target:self
+                                            selector:@selector(onTooltipHideTimer:)
+                                            userInfo:nil
+                                             repeats:NO];
+  [[NSRunLoop currentRunLoop] addTimer:mTooltipHideTimer forMode:(NSString*) kCFRunLoopCommonModes];
+}
+
+- (void) onTooltipHideTimer: (NSTimer*) pTimer
+{
+  mTooltipHideTimer = nil;
+  if (mTooltipPanel)
+  {
+    [mTooltipPanel orderOut:nil];
+  }
+}
+
+- (void) updateTooltipHoverAtPoint: (NSPoint) viewPoint
+{
+  if (!mGraphics || !mGraphics->TooltipsEnabled() || mGraphics->ControlIsCaptured())
+  {
+    [self resetTooltipState];
+    return;
+  }
+
+  IControl* hovered = mGraphics->GetMouseOverControl();
+  if (hovered && (hovered->IsHidden() || !CStringHasContents(hovered->GetTooltip())))
+    hovered = nullptr;
+
+  if (hovered != mTooltipControl)
+  {
+    [self hideTooltip];
+    mTooltipControl = hovered;
+    mTooltipAnchorPoint = viewPoint;
+    if (mTooltipControl)
     {
-      owner = c;
-      break;
+      mTooltipShowTimer = [NSTimer timerWithTimeInterval:kStwTooltipHoverDelay
+                                                  target:self
+                                                selector:@selector(onTooltipShowTimer:)
+                                                userInfo:nil
+                                                 repeats:NO];
+      [[NSRunLoop currentRunLoop] addTimer:mTooltipShowTimer forMode:(NSString*) kCFRunLoopCommonModes];
     }
   }
-  if (owner < 0)
-    return @"";
-
-  IControl* pOwner = mGraphics->GetControl(owner);
-  const char* tooltip = pOwner->GetTooltip();
-  // Compare in view pixels with the rect as registered (ToNSRect rounds outward), plus a pixel.
-  const NSRect registered = NSInsetRect(ToNSRect(mGraphics, pOwner->GetTargetRECT()), -1., -1.);
-  if (pOwner->IsHidden() || !CStringHasContents(tooltip) || !NSPointInRect(point, registered))
-    return @"";
-  // Mouse-over would never pick this control. IsHit() is not applied to the owner: AppKit asks
-  // only at the entry point, and a target rect corner outside a round hit area would leave the
-  // control without a tooltip for the whole visit.
-  if (pOwner->GetIgnoreMouse() || (pOwner->IsDisabled() && !pOwner->GetMouseOverWhenDisabled()))
-    return @"";
-
-  // A control above the owner that takes the mouse here (as for mouse-over) hides the tooltip,
-  // whether or not it has one; rects are registered only for controls with tooltip text.
-  if (mGraphics->AuxiliaryControlTakesMouse(x, y))
-    return @"";
-
-  for (int c = mGraphics->NControls() - 1; c > owner; --c)
+  else if (mTooltipControl)
   {
-    IControl* pControl = mGraphics->GetControl(c);
-    if (pControl->IsHidden() || pControl->GetIgnoreMouse())
-      continue;
-    if (pControl->IsDisabled() && !pControl->GetMouseOverWhenDisabled())
-      continue;
-    if (pControl->IsHit(x, y))
-      return @"";
+    mTooltipAnchorPoint = viewPoint;
+    if (mTooltipPanel && [mTooltipPanel isVisible])
+    {
+      const char* tip = mTooltipControl->GetTooltip();
+      if (CStringHasContents(tip))
+      {
+        NSString* nextText = [NSString stringWithUTF8String:tip];
+        if (![nextText isEqualToString:[mTooltipLabel stringValue]])
+          [self showTooltipText:nextText atViewPoint:mTooltipAnchorPoint];
+      }
+      else
+      {
+        [self resetTooltipState];
+      }
+    }
   }
+}
 
-  return [NSString stringWithUTF8String:tooltip];
+- (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData
+{
+  (void) pView;
+  (void) tag;
+  (void) point;
+  (void) pData;
+  return @"";
 }
 
 - (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl
 {
-  [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: pControl];
+  (void) bounds;
+  (void) pControl;
 }
 
 - (NSDragOperation) draggingEntered: (id<NSDraggingInfo>) sender

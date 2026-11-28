@@ -13,6 +13,9 @@ class HostResizeScaleTests(unittest.TestCase):
         start = source.index("void IGEditorDelegate::OnParentWindowResize(")
         end = source.index("void IGEditorDelegate::SetScreenScale(", start)
         method = source[start:end]
+        constrain_start = source.index("bool IGEditorDelegate::ConstrainHostEditorResize(")
+        constrain_end = source.index("void IGEditorDelegate::SendControlValueFromDelegate(", constrain_start)
+        constrain_method = source[constrain_start:constrain_end]
         preamble = r'''
 #include <algorithm>
 #include <cmath>
@@ -40,9 +43,20 @@ struct Graphics {
     if (layoutOnResize) ++layouts;
   }
 };
-struct IGEditorDelegate {
-  Graphics* graphics=nullptr; Graphics* GetUI() { return graphics; }
+struct IEditorDelegate {
+  bool ConstrainEditorResize(int& w, int& h) const {
+    const int origW = w, origH = h;
+    w = std::max(240, std::min(w, 2160));
+    h = std::max(154, std::min(h, 1392));
+    return w == origW && h == origH;
+  }
+};
+struct IGEditorDelegate : IEditorDelegate {
+  Graphics* graphics=nullptr;
+  Graphics* GetUI() { return graphics; }
+  const Graphics* GetUI() const { return graphics; }
   void OnParentWindowResize(int width,int height);
+  bool ConstrainHostEditorResize(int& w, int& h) const;
 };
 '''
         scenarios = r'''
@@ -186,6 +200,36 @@ int main() {
   delegate.OnParentWindowResize(1600,1200);
   assert(graphics.Width()==800 && graphics.Height()==600);
   assert(graphics.drawScale==1.f && !graphics.requestedHost);
+  // ConstrainHostEditorResize enforces aspect-locked uniform scale bounds
+  // for fixed-canvas Scale editors and round-trips through OnParentWindowResize.
+  {
+    graphics.mode=EUIResizerMode::Scale; graphics.layoutOnResize=false;
+    graphics.width=1120; graphics.height=512; graphics.drawScale=1.f;
+    graphics.minScale=.5f; graphics.maxScale=2.f;
+    for (float platform : {1.f, 1.5f, 2.f}) {
+      graphics.platformScale=platform;
+      graphics.drawScale=1.f;
+      // Arbitrary non-uniform host drag snaps to uniform scale and passes OnParentWindowResize.
+      int w=int(1500*platform), h=int(512*platform);
+      assert(!delegate.ConstrainHostEditorResize(w, h));
+      const float expectedScale = std::min(2.f, 1500.f / 1120.f);
+      assert(w == int(int(1120 * expectedScale) * platform));
+      assert(h == int(int(512 * expectedScale) * platform));
+      assert(delegate.ConstrainHostEditorResize(w, h));
+      delegate.OnParentWindowResize(w, h);
+      assert(graphics.Width()==1120 && graphics.Height()==512);
+      assert(int(graphics.WindowWidth()*platform)==w && int(graphics.WindowHeight()*platform)==h);
+      // Out-of-range drag clamps to [minScale, maxScale].
+      int bigW=int(4000*platform), bigH=int(2000*platform);
+      assert(!delegate.ConstrainHostEditorResize(bigW, bigH));
+      assert(bigW == int(int(1120 * 2.f) * platform));
+      assert(bigH == int(int(512 * 2.f) * platform));
+      int smallW=int(100*platform), smallH=int(50*platform);
+      assert(!delegate.ConstrainHostEditorResize(smallW, smallH));
+      assert(smallW == int(int(1120 * .5f) * platform));
+      assert(smallH == int(int(512 * .5f) * platform));
+    }
+  }
   std::puts("host resize scale/layout checks passed");
 }
 '''
@@ -194,7 +238,7 @@ int main() {
             compiler = os.environ.get("CXX", "c++")
         with tempfile.TemporaryDirectory(prefix="host-resize-scale-") as temp:
             cpp = Path(temp) / "test.cpp"
-            cpp.write_text(preamble + method + scenarios)
+            cpp.write_text(preamble + method + constrain_method + scenarios)
             binary = cpp.with_suffix("")
             flags = ["-isysroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"] if Path(compiler).is_absolute() else []
             result = subprocess.run([compiler,"-std=c++17",*flags,str(cpp),"-o",str(binary)],capture_output=True,text=True)

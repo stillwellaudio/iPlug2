@@ -1173,6 +1173,9 @@ public:
   
   /** @return \c true if tool tips are enabled */
   inline bool TooltipsEnabled() const { return mEnableTooltips; }
+
+  /** @return Pointer to the control currently under the mouse cursor, or nullptr */
+  IControl* GetMouseOverControl() const { return mMouseOver; }
   
   /** @return An EUIResizerMode Representing whether the graphics context should scale or be resized, e.g. when dragging a corner resizer */
   EUIResizerMode GetResizerMode() const { return mGUISizeMode; }

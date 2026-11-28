@@ -1127,7 +1127,7 @@ bool IPlugCLAP::guiAdjustSize(uint32_t* pWidth, uint32_t* pHeight) noexcept
   {
     int w = *pWidth;
     int h = *pHeight;
-    ConstrainEditorResize(w, h);
+    ConstrainHostEditorResize(w, h);
     *pWidth = w;
     *pHeight = h;
     

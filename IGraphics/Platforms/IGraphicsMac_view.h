@@ -125,6 +125,12 @@ using namespace igraphics;
   float mScaleResizeStartDrawScale;
   IRECTList mDirtyRects;
   IColorPickerHandlerFunc mColorPickerFunc;
+  NSPanel* mTooltipPanel;
+  NSTextField* mTooltipLabel;
+  NSTimer* mTooltipShowTimer;
+  NSTimer* mTooltipHideTimer;
+  IControl* mTooltipControl;
+  NSPoint mTooltipAnchorPoint;
 @public
   IGraphicsMac* mGraphics; // OBJC instance variables have to be pointers
 }
@@ -170,6 +176,9 @@ using namespace igraphics;
 //tooltip
 - (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData;
 - (void) registerToolTip: (IRECT&) bounds owner: (IControl*) pControl;
+- (void) hideTooltip;
+- (void) resetTooltipState;
+- (void) updateTooltipHoverAtPoint: (NSPoint) viewPoint;
 //drag-and-drop
 - (NSDragOperation) draggingEntered: (id <NSDraggingInfo>) sender;
 - (BOOL) performDragOperation: (id<NSDraggingInfo>) sender;
