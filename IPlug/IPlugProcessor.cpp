@@ -22,7 +22,8 @@
 using namespace iplug;
 
 IPlugProcessor::IPlugProcessor(const Config& config, EAPI plugAPI)
-: mPlugType((EIPlugPluginType) config.plugType)
+: mBusLayoutPolicy((plugAPI==kAPIVST2 || plugAPI==kAPIVST3 || plugAPI==kAPICLAP || plugAPI==kAPIAU || plugAPI==kAPIAAX) ? config.busLayouts : nullptr)
+, mPlugType((EIPlugPluginType) config.plugType)
 , mDoesMIDIIn(config.plugDoesMidiIn)
 , mDoesMIDIOut(config.plugDoesMidiOut)
 , mDoesMPE(config.plugDoesMPE)
@@ -32,6 +33,23 @@ IPlugProcessor::IPlugProcessor(const Config& config, EAPI plugAPI)
   int totalNInChans, totalNOutChans;
 
   ParseChannelIOStr(config.channelIOStr, mIOConfigs, totalNInChans, totalNOutChans, totalNInBuses, totalNOutBuses);
+
+  if (HasBusLayouts())
+  {
+    mBusLayoutsValid = mBusLayoutPolicy->IsValid();
+    if (mBusLayoutsValid)
+      for (const auto& c : mBusLayoutPolicy->configurations)
+        if (BusLayoutNumericShape(c) < 0) mBusLayoutsValid = false;
+    // Invalid opt-in declarations fail closed; never advertise the legacy path.
+    totalNInChans = totalNOutChans = 0;
+    if (mBusLayoutsValid)
+    {
+      int* totals[] = {&totalNInChans, &totalNOutChans};
+      for (int d=0; d<2; ++d)
+        for (auto capacity : mBusLayoutPolicy->capacities[d])
+        { mBusBufferOffsets[d].push_back(*totals[d]); *totals[d] += static_cast<int>(capacity); }
+    }
+  }
 
   mScratchData[ERoute::kInput].Resize(totalNInChans);
   mScratchData[ERoute::kOutput].Resize(totalNOutChans);
@@ -69,6 +87,8 @@ IPlugProcessor::~IPlugProcessor()
 
 void IPlugProcessor::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
+  if (HasBusLayouts())
+  { PassThroughBusLayouts(inputs, outputs, nFrames, false); return; }
   const int nIn = mChannelData[ERoute::kInput].GetSize();
   const int nOut = mChannelData[ERoute::kOutput].GetSize();
 
@@ -214,6 +234,7 @@ int IPlugProcessor::GetIOConfigWithChanCounts(std::vector<int>& inputBuses, std:
 
 int IPlugProcessor::MaxNChannelsForBus(ERoute direction, int busIdx) const
 {
+  if (HasBusLayouts()) return GetBusBufferCapacity(direction,busIdx);
   if(HasWildcardBus(direction))
     return -1;
 
@@ -277,10 +298,12 @@ void IPlugProcessor::SetChannelLabel(ERoute direction, int idx, const char* form
 
 void IPlugProcessor::SetLatency(int samples)
 {
+  if (HasBusLayouts() && samples<0) return;
   mLatency = samples;
 
   if (mLatencyDelay)
     mLatencyDelay->SetDelayTime(mLatency);
+  if (HasBusLayouts()) ResizeBusLayoutDelay();
 }
 
 //static
@@ -451,6 +474,7 @@ void IPlugProcessor::SetChannelConnections(ERoute direction, int idx, int n, boo
 
 void IPlugProcessor::InitLatencyDelay()
 {
+  if (HasBusLayouts()) { ResizeBusLayoutDelay(); return; }
   if (MaxNChannels(ERoute::kInput))
   {
     mLatencyDelay = std::unique_ptr<NChanDelayLine<PLUG_SAMPLE_DST>>(new NChanDelayLine<PLUG_SAMPLE_DST>(MaxNChannels(ERoute::kInput), MaxNChannels(ERoute::kOutput)));
@@ -502,6 +526,8 @@ void IPlugProcessor::AttachBuffers(ERoute direction, int idx, int n, PLUG_SAMPLE
 
 void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_DST type, int nFrames)
 {
+  if (HasBusLayouts())
+  { PassThroughBusLayouts(GetScratchData(kInput), GetScratchData(kOutput), nFrames, true); return; }
   if (mLatency && mLatencyDelay)
     mLatencyDelay->ProcessBlock(mScratchData[ERoute::kInput].Get(), mScratchData[ERoute::kOutput].Get(), nFrames);
   else
@@ -607,5 +633,167 @@ void IPlugProcessor::SetBlockSize(int blockSize)
     }
 
     mBlockSize = blockSize;
+  }
+}
+
+const LayoutBus* IPlugProcessor::GetActiveBusLayout(ERoute direction, int bus) const
+{
+  if (!mHasActiveBusLayout || bus < 0 || static_cast<size_t>(bus) >= mActiveBusLayout.buses[direction].size()) return nullptr;
+  return &mActiveBusLayout.buses[direction][bus];
+}
+
+int IPlugProcessor::GetBusBufferOffset(ERoute direction, int bus) const
+{
+  if (bus < 0 || static_cast<size_t>(bus) >= mBusBufferOffsets[direction].size()) return -1;
+  return mBusBufferOffsets[direction][bus];
+}
+
+int IPlugProcessor::GetBusBufferCapacity(ERoute direction, int bus) const
+{
+  if (!mBusLayoutsValid || bus < 0 || static_cast<size_t>(bus) >= mBusLayoutPolicy->capacities[direction].size()) return 0;
+  return static_cast<int>(mBusLayoutPolicy->capacities[direction][bus]);
+}
+
+int IPlugProcessor::GetActiveBusChannelCount(ERoute direction, int bus) const
+{
+  const auto* b = GetActiveBusLayout(direction, bus);
+  return b ? static_cast<int>(b->layout.NChannels()) : 0;
+}
+
+int IPlugProcessor::BusLayoutNumericShape(const BusLayoutConfiguration& candidate) const
+{
+  for (int i=0; i<NIOConfigs(); ++i)
+  {
+    const auto* numeric = GetIOConfig(i);
+    bool matches = true;
+    for (int d=0; d<2 && matches; ++d)
+    {
+      const auto dir = static_cast<ERoute>(d);
+      if (candidate.buses[d].size() != static_cast<size_t>(numeric->NBuses(dir))) { matches = false; break; }
+      for (size_t b=0; b<candidate.buses[d].size(); ++b)
+      {
+        const int width = numeric->NChansOnBusSAFE(dir, static_cast<int>(b));
+        if (width >= 0 && static_cast<uint32_t>(width) != candidate.buses[d][b].layout.NChannels()) { matches=false; break; }
+      }
+    }
+    if (matches) return i;
+  }
+  return -1;
+}
+
+bool IPlugProcessor::CanApplyBusLayout(const BusLayoutConfiguration& candidate) const
+{
+  return mBusLayoutsValid && BusLayoutNumericShape(candidate) >= 0 && mBusLayoutPolicy->Accepts(candidate);
+}
+
+bool IPlugProcessor::CommitBusLayout(BusLayoutConfiguration candidate)
+{
+  if (!CanApplyBusLayout(candidate)) return false;
+  candidate.id = mBusLayoutPolicy->ListedID(candidate);
+  if (mHasActiveBusLayout && mActiveBusLayout == candidate) return true;
+  mActiveBusLayout = std::move(candidate);
+  mHasActiveBusLayout = true;
+  std::fill(mBusLayoutDelay.begin(), mBusLayoutDelay.end(), sample(0));
+  mBusLayoutDelayPosition = 0;
+  OnBusLayoutChanged();
+  return true;
+}
+
+bool IPlugProcessor::SetBusLayoutActive(ERoute direction, int bus, bool active)
+{
+  if (!GetActiveBusLayout(direction, bus)) return false;
+  auto candidate = mActiveBusLayout;
+  candidate.buses[direction][bus].active = active;
+  return CommitBusLayout(std::move(candidate));
+}
+
+bool IPlugProcessor::BeginBusLayoutBlock(int nFrames)
+{
+  if (!mHasActiveBusLayout || nFrames < 0 || nFrames > GetBlockSize()) return false;
+  for (int d=0; d<2; ++d)
+    for (int c=0; c<MaxNChannels(static_cast<ERoute>(d)); ++c)
+    {
+      auto* ch = mChannelData[d].Get(c);
+      ch->mConnected = false;
+      ch->mIncomingData = nullptr;
+      *ch->mData = ch->mScratchBuf.Get();
+      if (nFrames) memset(*ch->mData, 0, sizeof(sample) * nFrames);
+    }
+  return true;
+}
+
+bool IPlugProcessor::AttachBusBuffers(ERoute direction, int bus, int count,
+                                     PLUG_SAMPLE_DST** buffers, int nFrames, uint64_t silenceMask)
+{
+  const auto* b = GetActiveBusLayout(direction, bus);
+  if (!b || count < 0 || static_cast<uint32_t>(count) != b->layout.NChannels() || nFrames < 0 || nFrames > GetBlockSize()) return false;
+  if (!b->active || !nFrames) return true;
+  const int offset = GetBusBufferOffset(direction, bus);
+  for (int c=0; c<count; ++c)
+  {
+    auto* ch = mChannelData[direction].Get(offset+c);
+    if (buffers && buffers[c] && !(direction == kInput && c < 64 && (silenceMask & (uint64_t(1) << c))))
+    { ch->mConnected = true; *ch->mData = buffers[c]; }
+  }
+  return true;
+}
+
+bool IPlugProcessor::AttachBusBuffers(ERoute direction, int bus, int count,
+                                     PLUG_SAMPLE_SRC** buffers, int nFrames, uint64_t silenceMask)
+{
+  const auto* b = GetActiveBusLayout(direction, bus);
+  if (!b || count < 0 || static_cast<uint32_t>(count) != b->layout.NChannels() || nFrames < 0 || nFrames > GetBlockSize()) return false;
+  if (!b->active || !nFrames) return true;
+  const int offset = GetBusBufferOffset(direction, bus);
+  for (int c=0; c<count; ++c)
+  {
+    auto* ch = mChannelData[direction].Get(offset+c);
+    if (buffers && buffers[c] && !(direction == kInput && c < 64 && (silenceMask & (uint64_t(1) << c))))
+    {
+      ch->mConnected = true;
+      if (direction == kInput) CastCopy(ch->mScratchBuf.Get(), buffers[c], nFrames);
+      else ch->mIncomingData = buffers[c];
+    }
+  }
+  return true;
+}
+
+void IPlugProcessor::ResizeBusLayoutDelay()
+{
+  const size_t channels = static_cast<size_t>(MaxNChannels(kOutput));
+  const size_t latency = static_cast<size_t>(std::max(0, mLatency));
+  if (latency && channels > mBusLayoutDelay.max_size() / latency) return;
+  mBusLayoutDelay.assign(channels * latency, sample(0));
+  mBusLayoutDelayPosition = 0;
+}
+
+void IPlugProcessor::PassThroughBusLayouts(sample** inputs, sample** outputs, int nFrames, bool delay)
+{
+  if (!mHasActiveBusLayout || nFrames <= 0 || nFrames > GetBlockSize()) return;
+  const bool delayed = delay && mLatency > 0 && !mBusLayoutDelay.empty();
+  for (int frame=0; frame<nFrames; ++frame)
+  {
+    for (size_t b=0; b<mBusBufferOffsets[kOutput].size(); ++b)
+    {
+      const auto* output = GetActiveBusLayout(kOutput, static_cast<int>(b));
+      const auto* source = output ? GetActiveBusLayout(kInput, output->bypassInputBus) : nullptr;
+      const int outOffset = GetBusBufferOffset(kOutput, static_cast<int>(b));
+      const int inOffset = source ? GetBusBufferOffset(kInput, output->bypassInputBus) : -1;
+      for (int c=0; c<GetBusBufferCapacity(kOutput, static_cast<int>(b)); ++c)
+      {
+        const int flat = outOffset+c;
+        const bool routed = output && output->active && source && source->active &&
+          c < static_cast<int>(output->layout.NChannels()) && c < static_cast<int>(source->layout.NChannels());
+        const sample input = routed ? inputs[inOffset+c][frame] : sample(0);
+        if (delayed)
+        {
+          const size_t position = static_cast<size_t>(flat) * mLatency + mBusLayoutDelayPosition;
+          outputs[flat][frame] = mBusLayoutDelay[position];
+          mBusLayoutDelay[position] = input;
+        }
+        else outputs[flat][frame] = input;
+      }
+    }
+    if (delayed && ++mBusLayoutDelayPosition == mLatency) mBusLayoutDelayPosition = 0;
   }
 }

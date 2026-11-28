@@ -26,6 +26,7 @@
 #include "IPlugPlatform.h"
 #include "IPlugMidi.h" // <- Midi related structs in here
 #include "IPlugUtilities.h"
+#include "IPlugBusLayout.h"
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -425,6 +426,7 @@ struct Config
   bool plugHostResize;
   const char* bundleID;
   const char* appGroupID;
+  const BusLayoutPolicy* busLayouts;
   
   Config(int nParams,
          int nPresets,
@@ -450,7 +452,8 @@ struct Config
          int plugMinHeight,
          int plugMaxHeight,
          const char* bundleID,
-         const char* appGroupID)
+         const char* appGroupID,
+         const BusLayoutPolicy* busLayouts = nullptr)
               
   : nParams(nParams)
   , nPresets(nPresets)
@@ -477,6 +480,7 @@ struct Config
   , plugHostResize(plugHostResize)
   , bundleID(bundleID)
   , appGroupID(appGroupID)
+  , busLayouts(busLayouts)
   {};
 };
 

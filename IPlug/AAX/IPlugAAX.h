@@ -138,6 +138,8 @@ private:
   WDL_String mTrackName;
   std::vector<WDL_TypedBuf<sample>> mBypassFadeWetBuffers;
   std::vector<WDL_TypedBuf<sample>> mBypassFadeDryBuffers;
+  // Reserved-offset lookup for the opt-in AAX layout path; allocated during construction only.
+  std::vector<float*> mBusLayoutOutputPointers;
   bool mBypassFadeActive = false;
   bool mBypassFadeToDry = false;
   int mBypassFadePos = 0;

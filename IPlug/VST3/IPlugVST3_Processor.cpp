@@ -39,7 +39,7 @@ tresult PLUGIN_API IPlugVST3Processor::initialize(FUnknown* context)
   
   if (AudioEffect::initialize(context) == kResultOk)
   {
-    Initialize(this);
+    if (!Initialize(this)) return kResultFalse;
     IPlugVST3GetHost(this, context);
     OnHostIdentified();
     OnParamReset(kReset);
@@ -52,6 +52,7 @@ tresult PLUGIN_API IPlugVST3Processor::initialize(FUnknown* context)
 
 tresult PLUGIN_API IPlugVST3Processor::terminate()
 {
+  ResetLayoutNativeBuses();
   return AudioEffect::terminate();
 }
 
@@ -62,12 +63,24 @@ tresult PLUGIN_API IPlugVST3Processor::setBusArrangements(SpeakerArrangement* pI
   return SetBusArrangements(this, pInputBusArrangements, numInBuses, pOutputBusArrangements, numOutBuses) ? kResultTrue : kResultFalse;
 }
 
+tresult PLUGIN_API IPlugVST3Processor::activateBus(MediaType type, BusDirection dir, int32 index, TBool state)
+{
+  if (HasBusLayouts() && type==kAudio && (IsLayoutActivated() || (dir!=kInput && dir!=kOutput))) return kResultFalse;
+  const auto result=AudioEffect::activateBus(type,dir,index,state);
+  if (HasBusLayouts() && type==kAudio && result==kResultOk)
+    SetBusLayoutActive(static_cast<ERoute>(dir),index,state);
+  return result;
+}
+
 tresult PLUGIN_API IPlugVST3Processor::setActive(TBool state)
 {
   TRACE
   
-  OnActivate((bool) state);
-  return AudioEffect::setActive(state);
+  if (!HasBusLayouts()) { OnActivate((bool) state); return AudioEffect::setActive(state); }
+  if (HasBusLayouts() && state && !GetActiveBusLayoutConfiguration()) return kResultFalse;
+  const auto result=AudioEffect::setActive(state);
+  if (result==kResultOk) { SetLayoutActivated(state); OnActivate((bool) state); }
+  return result;
 }
 
 tresult PLUGIN_API IPlugVST3Processor::setupProcessing(ProcessSetup& newSetup)
@@ -88,6 +101,7 @@ tresult PLUGIN_API IPlugVST3Processor::process(ProcessData& data)
 {
   TRACE
   
+  if (HasBusLayouts() && !ValidBusLayoutProcess(data,processSetup)) return kInvalidArgument;
   Process(data, processSetup, audioInputs, audioOutputs, mMidiMsgsFromEditor, mMidiMsgsFromProcessor, mSysExDataFromEditor, mSysexBuf);
   return kResultOk;
 }

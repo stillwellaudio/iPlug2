@@ -56,6 +56,7 @@ public:
   void OutputSysexFromEditor();
 
 private:
+  bool mBusLayoutActivated=false;
   virtual VstIntPtr VSTVendorSpecific(VstInt32 idx, VstIntPtr value, void* ptr, float opt) { return 0; }
   virtual VstIntPtr VSTCanDo(const char* hostString) { return 0; }
     
@@ -67,7 +68,7 @@ private:
    @param nFrames the number of samples to be processed this block
    */
   template <class SAMPLETYPE>
-  void VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt32 nFrames);
+  bool VSTPreProcess(SAMPLETYPE** inputs, SAMPLETYPE** outputs, VstInt32 nFrames);
   
   static VstIntPtr VSTCALLBACK VSTDispatcher(AEffect *pEffect, VstInt32 opCode, VstInt32 idx, VstIntPtr value, void *ptr, float opt);
   static void VSTCALLBACK VSTProcess(AEffect *pEffect, float **inputs, float **outputs, VstInt32 nFrames);  // Deprecated.

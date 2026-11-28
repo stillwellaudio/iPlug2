@@ -313,6 +313,9 @@ bool IPlugVST3ProcessorBase::SetupProcessing(const ProcessSetup& setup, ProcessS
   if ((setup.symbolicSampleSize != kSample32) && (setup.symbolicSampleSize != kSample64))
     return false;
   
+  if (HasBusLayouts() && (IsLayoutActivated() || setup.maxSamplesPerBlock<=0 ||
+      !std::isfinite(setup.sampleRate) || setup.sampleRate<=0 ||
+      static_cast<uint64_t>(setup.maxSamplesPerBlock)*std::max(1,std::max(MaxNChannels(kInput),MaxNChannels(kOutput)))>INT32_MAX/sizeof(sample))) return false;
   storedSetup = setup;
   
   SetSampleRate(setup.sampleRate);
@@ -455,6 +458,38 @@ void IPlugVST3ProcessorBase::ProcessParameterChanges(ProcessData& data, IPlugQue
 void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup, const BusList& ins, const BusList& outs)
 {
   int32 sampleSize = setup.symbolicSampleSize;
+
+  if (HasBusLayouts())
+  {
+    if (!ValidBusLayoutProcess(data,setup) || !BeginBusLayoutBlock(data.numSamples)) return;
+    if (!data.numSamples) return;
+    for (int d=0; d<2; ++d)
+    {
+      auto* buses=d ? data.outputs : data.inputs;
+      const int count=d ? data.numOutputs : data.numInputs;
+      for (int b=0; b<count; ++b)
+      {
+        if (!buses[b].numChannels) continue; // Legal inactive bus.
+        const uint64_t silence=d ? 0 : buses[b].silenceFlags;
+        if (sampleSize==kSample32)
+          AttachBusBuffers(static_cast<ERoute>(d),b,buses[b].numChannels,buses[b].channelBuffers32,data.numSamples,silence);
+        else
+          AttachBusBuffers(static_cast<ERoute>(d),b,buses[b].numChannels,buses[b].channelBuffers64,data.numSamples,silence);
+        if (d) buses[b].silenceFlags=0; // Conservative: output may contain DSP-generated audio.
+      }
+    }
+    if (GetBypassed())
+    {
+      if (sampleSize==kSample32) PassThroughBuffers(0.f,data.numSamples);
+      else PassThroughBuffers(0.,data.numSamples);
+    }
+    else
+    {
+      if (sampleSize==kSample32) ProcessBuffers(0.f,data.numSamples);
+      else ProcessBuffers(0.,data.numSamples);
+    }
+    return;
+  }
     
   if (sampleSize == kSample32 || sampleSize == kSample64)
   {
@@ -530,6 +565,49 @@ void IPlugVST3ProcessorBase::ProcessAudio(ProcessData& data, ProcessSetup& setup
 #endif
     }
   }
+}
+
+bool IPlugVST3ProcessorBase::ValidBusLayoutProcess(const ProcessData& data, const ProcessSetup& setup) const
+{
+  const auto* active=GetActiveBusLayoutConfiguration();
+  if (!active || data.numSamples<0 || data.numSamples>GetBlockSize() ||
+      data.symbolicSampleSize!=setup.symbolicSampleSize ||
+      (data.symbolicSampleSize!=kSample32 && data.symbolicSampleSize!=kSample64) ||
+      data.numInputs<0 || data.numOutputs<0 ||
+      static_cast<size_t>(data.numInputs)>active->buses[0].size() ||
+      static_cast<size_t>(data.numOutputs)>active->buses[1].size() ||
+      (data.numInputs && !data.inputs) || (data.numOutputs && !data.outputs)) return false;
+  // The SDK permits omitted trailing inactive buses. A zero-frame parameter
+  // flush may omit all audio buses, including active ones.
+  if (data.numSamples)
+    for (int d=0; d<2; ++d)
+      for (size_t b=static_cast<size_t>(d ? data.numOutputs : data.numInputs); b<active->buses[d].size(); ++b)
+        if (active->buses[d][b].active) return false;
+  for (int d=0; d<2; ++d)
+  {
+    const auto* buses=d ? data.outputs : data.inputs;
+    const int count=d ? data.numOutputs : data.numInputs;
+    for (int b=0; b<count; ++b)
+    {
+      if (!(buses[b].numChannels==0 && (!active->buses[d][b].active || !data.numSamples)) &&
+          buses[b].numChannels!=static_cast<int>(active->buses[d][b].layout.NChannels())) return false;
+      if (d && active->buses[d][b].active && data.numSamples && buses[b].numChannels)
+      {
+        // Active output buffers are writable host storage, not silent inputs.
+        if (data.symbolicSampleSize==kSample32)
+        {
+          if (!buses[b].channelBuffers32) return false;
+          for (int c=0;c<buses[b].numChannels;++c) if (!buses[b].channelBuffers32[c]) return false;
+        }
+        else
+        {
+          if (!buses[b].channelBuffers64) return false;
+          for (int c=0;c<buses[b].numChannels;++c) if (!buses[b].channelBuffers64[c]) return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 void IPlugVST3ProcessorBase::Process(ProcessData& data, ProcessSetup& setup, const BusList& ins, const BusList& outs, IPlugQueue<IMidiMsg>& fromEditor, IPlugQueue<IMidiMsg>& fromProcessor, IPlugQueue<SysExData>& sysExFromEditor, SysExData& sysExBuf)
