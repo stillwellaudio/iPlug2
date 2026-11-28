@@ -125,23 +125,62 @@ int main() {
   assert(graphics.Width()==800 && graphics.Height()==600 && graphics.layouts==3);
   graphics.mode=EUIResizerMode::Scale;
   graphics.hasCornerResizer=false; graphics.layoutOnResize=false;
-  // Host constraints can permit sizes outside the UI's draw-scale limits.
-  for (const auto size : {std::pair<int,int>{240,154}, {2160,1392}}) {
-    graphics.width=720; graphics.height=464; graphics.drawScale=1.f;
+  // Fixed-canvas scaling editors ignore out-of-range or nonuniform host rects
+  // instead of mutating the logical canvas and poisoning reopen state.
+  for (const auto size : {std::pair<int,int>{240,154}, {2160,1392}, {1000,580}}) {
+    graphics.width=720; graphics.height=464; graphics.drawScale=1.25f;
+    graphics.platformScale=1.f;
+    const int prevCalls=graphics.calls;
     delegate.OnParentWindowResize(size.first,size.second);
-    assert(graphics.WindowWidth()==size.first && graphics.WindowHeight()==size.second);
+    assert(graphics.Width()==720 && graphics.Height()==464);
+    assert(graphics.drawScale==1.25f && graphics.calls==prevCalls);
+  }
+  // Catch-22 REAPER FX-chain regression: bogus 408x295 host size followed by
+  // CloseWindow()/OpenWindow() must preserve 1120x512 and valid uniform scales.
+  {
+    graphics.width=1120; graphics.height=512; graphics.drawScale=1.25f;
+    graphics.minScale=.5f; graphics.maxScale=4.f;
+    graphics.platformScale=1.f;
+    for (float platform : {1.f, 2.f}) {
+      graphics.platformScale=platform;
+      delegate.OnParentWindowResize(int(408*platform), int(295*platform));
+      assert(graphics.Width()==1120 && graphics.Height()==512);
+      assert(std::fabs(graphics.drawScale-1.25f)<0.00001f);
+      // Simulate IGEditorDelegate::CloseWindow() -> OpenWindow() replay.
+      const int lastW=graphics.Width(), lastH=graphics.Height();
+      const float lastS=graphics.GetDrawScale();
+      Graphics reopened;
+      reopened.width=1120; reopened.height=512; reopened.drawScale=1.f;
+      reopened.minScale=.5f; reopened.maxScale=4.f; reopened.platformScale=platform;
+      reopened.Resize(lastW, lastH, lastS, true);
+      assert(reopened.Width()==1120 && reopened.Height()==512);
+      assert(std::fabs(reopened.drawScale-1.25f)<0.00001f);
+    }
+    // Valid uniform corner-drag resizes within [0.5, 4.0] still scale cleanly.
+    graphics.platformScale=1.f;
+    for (float s : {0.5f, 1.f, 1.25f, 1.5f, 1.75f, 2.f, 4.f}) {
+      delegate.OnParentWindowResize(int(1120.f*s), int(512.f*s));
+      assert(graphics.Width()==1120 && graphics.Height()==512);
+      assert(std::fabs(graphics.drawScale-s)<0.0001f);
+    }
+    graphics.maxScale=2.f;
   }
   // Truncation below a legal endpoint still reconstructs that endpoint scale.
   graphics.width=721; graphics.height=465; graphics.drawScale=1.f;
   delegate.OnParentWindowResize(360,232);
   assert(graphics.Width()==721 && graphics.Height()==465 && graphics.drawScale==.5f);
-  graphics.width=720; graphics.height=464;
-  // Nonuniform host rectangles retain the existing logical-layout behavior.
+  // Responsive Scale+layout editors still fall back to logical-canvas resize
+  // for out-of-range or nonuniform host rectangles.
+  graphics.hasCornerResizer=true; graphics.layoutOnResize=true;
   graphics.platformScale=1.f;
-  delegate.OnParentWindowResize(1000,580);
-  assert(graphics.Width()==1000 && graphics.Height()==580);
-  assert(graphics.WindowWidth()==1000 && graphics.WindowHeight()==580);
-  assert(graphics.drawScale==1.f);
+  for (const auto size : {std::pair<int,int>{240,154}, {2160,1392}, {1000,580}}) {
+    graphics.width=720; graphics.height=464; graphics.drawScale=1.f;
+    delegate.OnParentWindowResize(size.first,size.second);
+    assert(graphics.Width()==size.first && graphics.Height()==size.second);
+    assert(graphics.WindowWidth()==size.first && graphics.WindowHeight()==size.second);
+    assert(graphics.drawScale==1.f);
+  }
+  graphics.hasCornerResizer=false; graphics.layoutOnResize=false;
   // Layout resizers retain their existing resize-the-canvas behavior.
   graphics.mode=EUIResizerMode::Size; graphics.platformScale=2.f;
   delegate.OnParentWindowResize(1600,1200);

@@ -143,6 +143,11 @@ void IGEditorDelegate::OnParentWindowResize(int width, int height)
         pGraphics->Resize(logicalWidth, logicalHeight, drawScale, false);
         return;
       }
+      // Fixed-canvas scaling editors cannot reflow into an arbitrary or
+      // out-of-range host rectangle; ignore it rather than mutating the
+      // logical canvas and poisoning CloseWindow()/OpenWindow().
+      if (!pGraphics->GetLayoutOnResize())
+        return;
     }
     // Responsive layouts and host sizes that cannot be represented by a
     // permitted uniform scale keep the existing logical-canvas resize path.
